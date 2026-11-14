@@ -3,7 +3,7 @@
   - 약 이름(item_name)으로 조회 → 제품명, 품목기준코드, 주성분
   - 인증키: 환경변수 MFDS_API_KEY → .streamlit/secrets.toml → Streamlit Cloud Secrets 순서로 찾음
   - 서비스 버전·응답 필드명이 바뀌면 아래 URL / INGR_FIELDS만 고치면 됨
-    (확인: python tools/test_api.py 게보린정)
+    (확인: python test_api.py 게보린정)
 """
 import json
 import os

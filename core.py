@@ -15,7 +15,7 @@ import re
 import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from itertools import combinations
 
 import pandas as pd
@@ -23,6 +23,13 @@ import pandas as pd
 from rules import CLASSES, PAIR_RULES
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+
+KST = timezone(timedelta(hours=9))        # 한국은 서머타임이 없어 고정 +9시간
+
+
+def today_kst() -> date:
+    """서버가 UTC(Streamlit Cloud)여도 한국 날짜를 돌려줌"""
+    return datetime.now(KST).date()
 
 # ══════════════════════════════════════════════════════════════
 # 1. 성분명 정규화
@@ -42,9 +49,22 @@ HYDRATE = {"hydrate", "monohydrate", "dihydrate", "trihydrate", "hemihydrate",
            "sesquihydrate", "pentahydrate", "anhydrous", "micronized"}
 MINERAL_HEAD = {"sodium", "potassium", "calcium", "magnesium", "aluminum", "aluminium",
                 "ferrous", "ferric", "zinc", "lithium", "iron"}
+# 앞에 붙은 나트륨·칼륨·칼슘·마그네슘은 대개 '염'이라 떼어냄 (sodium valproate → valproate)
+# 단, 뒤가 무기 음이온이면 그 자체가 성분이라 유지 (calcium carbonate, potassium chloride)
+COUNTER_ION_HEAD = {"sodium", "disodium", "potassium", "dipotassium", "calcium", "magnesium"}
+INORGANIC_TAIL = {"carbonate", "bicarbonate", "chloride", "oxide", "hydroxide", "citrate", "gluconate",
+                  "sulfate", "sulphate", "phosphate", "dihydrogen", "hydrogen", "fluoride", "iodide",
+                  "lactate", "acetate", "aluminometasilicate", "trisilicate", "silicate", "alginate",
+                  "pidolate", "aspartate", "orotate", "glycerophosphate", "nitrate", "pyrophosphate"}
 EN_ALIAS = {"paracetamol": "acetaminophen", "acetylsalicylic acid": "aspirin",
             "salicylic acid acetate": "aspirin", "levothyroxine sodium": "levothyroxine",
-            "chlorphenamine": "chlorpheniramine", "esomeprazol": "esomeprazole", "caffeine anhydrous": "caffeine", "anhydrous caffeine": "caffeine", "dexchlorphenamine": "dexchlorpheniramine"}
+            "chlorphenamine": "chlorpheniramine", "esomeprazol": "esomeprazole", "caffeine anhydrous": "caffeine", "anhydrous caffeine": "caffeine", "dexchlorphenamine": "dexchlorpheniramine",
+            # 같은 성분의 다른 표기 (DUR 데이터에서 확인된 것)
+            "microemulsion cyclosporine": "cyclosporine", "ciclosporin": "cyclosporine",
+            "valproic acid": "valproate", "alendronic acid": "alendronate",
+            "ibandronic acid": "ibandronate", "risedronic acid": "risedronate",
+            "zoledronic acid": "zoledronate", "mycophenolic acid": "mycophenolate",
+            "fusidic acid": "fusidate", "tetradecyl": "sodium tetradecyl sulfate"}
 
 KO_SALT_TAIL = ["삼수화물", "이수화물", "일수화물", "반수화물", "마그네슘", "황산수소염", "염산염", "황산염", "말레산염", "베실산염", "푸마르산염", "타르타르산염", "숙신산염",
                 "메실산염", "질산염", "인산염", "시트르산염", "브롬화수소산염", "칼슘수화물", "칼슘",
@@ -91,7 +111,8 @@ def split_top(s: str):
             depth += 1
         elif ch in ")]":
             depth = max(0, depth - 1)
-        if depth == 0 and (ch in "+,;/|" or (ch == "." and s[i + 1:i + 2] == " ")):
+        abbrev = ch == "." and re.search(r"(^|\s)(st|sp|ssp|var)$", "".join(buf), re.I)  # St. John's 등
+        if depth == 0 and (ch in "+,;/|" or (ch == "." and s[i + 1:i + 2] == " " and not abbrev)):
             out.append("".join(buf))
             buf = []
         else:
@@ -106,6 +127,10 @@ def norm_en(s: str) -> str:
     m = re.search(r"\(\s*as\s+([^)]+)\)", s)
     if m:                                   # '(as rosuvastatin)' → 활성 성분 사용
         s = m.group(1)
+    else:                                   # 괄호 없이 '... hydrate as teneligliptin'
+        m = re.search(r"\bas\s+([a-z][a-z0-9\- ]+)$", s)
+        if m:
+            s = m.group(1)
     s = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", s)
     s = s.replace("함유제제", " ").replace("함유", " ")
     s = re.sub(r"[^a-z0-9\-. ]", " ", s)
@@ -115,6 +140,9 @@ def norm_en(s: str) -> str:
     toks = [t for t in toks if t and t not in {"mg", "g", "ml", "mcg", "ug", "iu", "l"}]
     if not toks:
         return ""
+    if toks[0] in COUNTER_ION_HEAD and len(toks) > 1 and \
+            not all(t in INORGANIC_TAIL or t in HYDRATE for t in toks[1:]):
+        toks = toks[1:]                     # sodium valproate → valproate
     if toks[0] in MINERAL_HEAD:             # 탄산칼슘·염화칼륨 같은 무기질은 이름 유지
         toks = [t for t in toks if t not in HYDRATE] or toks
     else:
@@ -180,7 +208,7 @@ class DURData:
 
         self._build_ko_dict()
 
-        # 전체 성분 보강 파일(tools/build_full_ingredients.py로 생성, 선택)
+        # 전체 성분 보강 파일(build_full_ingredients.py로 생성, 선택)
         self.full = {}
         fp = os.path.join(folder, "full_ingredients.csv")
         if os.path.exists(fp):
@@ -209,10 +237,7 @@ class DURData:
             val = (r.상세정보, r.비고)
             self.combo_code[(r.성분코드A, r.성분코드B)] = val
             self.combo_code[(r.성분코드B, r.성분코드A)] = val
-            for a in filter(None, map(norm_en, split_top(r.성분명A))):
-                for b in filter(None, map(norm_en, split_top(r.성분명B))):
-                    if a != b:
-                        self.combo_name.setdefault(frozenset((a, b)), val)
+        self._build_combo_name(combo)
 
         # 단일 약 규칙: 코드별 + 성분명별
         def index(df, cols):
@@ -231,6 +256,106 @@ class DURData:
         # 성분 선택 목록 (자동 등록·프로필 기피성분 입력용)
         all_en = set().union(*self.code_ingrs.values()) | set(self.ko2en.values())
         self.vocab = sorted(all_en)
+
+    # ── 병용금기 성분명 색인
+    def _build_combo_name(self, combo):
+        """
+        combo.csv의 '성분명'은 복합제 코드여도 성분 하나만 적혀 있고, 그게 금기의 원인 성분이
+        아닐 때가 많음 (예: 텔미사르탄+로수바스타틴 복합제 코드가 'telmisartan'으로 표기돼
+        '텔미사르탄 + 사이클로스포린'이 금기처럼 보임. 실제 원인은 로수바스타틴).
+          1) 한 코드가 데이터 곳곳에서 서로 다른 성분명으로 나오면 복합제 코드로 판단
+          2) 단일 성분 코드끼리의 행만으로 '확실한' 성분 쌍 색인을 만듦
+          3) 복합제 코드의 행은 원인 성분을 추정해서 다시 넣음
+             - 그 복합제의 성분 중 하나가 상대 성분과 이미 확실한 쌍이면 → 설명됨(추가 없음)
+             - 설명 안 되면 → 그 복합제에서 금기를 주로 일으키는 성분(원인 성분)으로 넣음
+               원인 성분은 그 코드의 다른 행들을 가장 많이 설명하는 성분이고,
+               한 성분이 60% 이상을 차지할 때만 인정 (감기약처럼 원인이 여럿이면 넣지 않음)
+             - 단, 상세정보 문장이 그 복합제의 성분 이름을 직접 말하면 그 성분(들)을 우선
+               (예: 'Fluticasone의 혈중농도 증가… Salmeterol의 혈중농도 증가' → 두 성분 모두)
+        """
+        names = lambda x: set(filter(None, map(norm_en, split_top(x))))
+        by_code = defaultdict(set)
+        for code, ings in self.code_ingrs.items():
+            by_code[code] |= ings
+        rows = []
+        for r in combo.itertuples():
+            na, nb = names(r.성분명A), names(r.성분명B)
+            by_code[r.성분코드A] |= na
+            by_code[r.성분코드B] |= nb
+            rows.append((r.성분코드A, na, r.성분코드B, nb, (r.상세정보, r.비고)))
+        self.multi_codes = {c for c, n in by_code.items() if len(n) > 1}
+        multi = self.multi_codes
+
+        def add(a, b, val, index):
+            if a != b:
+                index.setdefault(frozenset((a, b)), val)
+
+        sure = {}
+        for ca, na, cb, nb, val in rows:
+            if ca not in multi and cb not in multi:
+                for a in na:
+                    for b in nb:
+                        add(a, b, val, sure)
+
+        cand = lambda c, n: by_code[c] if c in multi else n
+        explained = lambda A, B: any(frozenset((a, b)) in sure for a in A for b in B if a != b)
+
+        score = defaultdict(Counter)            # 복합제 코드 → 성분별 '설명한 행 수'
+        for ca, na, cb, nb, val in rows:
+            for c, mine, other in ((ca, cand(ca, na), cand(cb, nb)), (cb, cand(cb, nb), cand(ca, na))):
+                if c in multi:
+                    for s in mine:
+                        if explained({s}, other):
+                            score[c][s] += 1
+        culprit = {}
+        for c, cnt in score.items():
+            s, n = cnt.most_common(1)[0]
+            if n >= 2 and n / sum(cnt.values()) >= 0.6:
+                culprit[c] = s
+
+        head = lambda i: i.split()[0]           # 'fluticasone propionate' → 'fluticasone'
+        heads = lambda xs: {head(x) for x in xs}
+        known = sorted({head(i) for v in by_code.values() for i in v
+                        if len(head(i)) >= 6 and re.fullmatch(r"[a-z\-]+", head(i))})
+        # 한글이 바로 붙는 경우('Fluticasone의')도 잡도록 \b 대신 '영문자가 아닌 것'으로 경계 판단
+        pat = re.compile(r"(?<![a-z])(" + "|".join(map(re.escape, known)) + r")(?![a-z])") if known else None
+        memo = {}
+
+        def others_named(text):
+            if text not in memo:
+                memo[text] = set(pat.findall(text.lower())) if pat else set()
+            return memo[text]
+
+        def mentioned(cands, text):
+            """상세정보 문장에 이름이 나오는 성분 (예: '증가된 Glecaprevir 농도…')"""
+            named = others_named(text)
+            return {c for c in cands if head(c) in named or (self.en2ko.get(c) and self.en2ko[c] in text)}
+
+        def pick(code, listed, text):
+            if code not in multi:
+                return listed
+            m = mentioned(by_code[code], text)
+            if m:                                 # 문장이 복합제 성분을 직접 짚으면 그 성분(들)을 우선
+                return m                          # ('Fluticasone… Salmeterol…' → 둘 다)
+            return {culprit[code]} if code in culprit else set()
+
+        self.combo_name = dict(sure)
+        self.combo_inferred = {}                # 원인 성분 추정으로 되살린 쌍 (검토용)
+        for ca, na, cb, nb, val in rows:
+            if ca not in multi and cb not in multi:
+                continue
+            if explained(cand(ca, na), cand(cb, nb)):
+                continue
+            A, B = pick(ca, na, val[0]), pick(cb, nb, val[0])
+            # 문장이 전혀 다른 성분을 원인으로 말하면 추정을 믿지 않음
+            # (예: 살메테롤+플루티카손 복합제 행의 'Fluticasone의 혈중농도 증가')
+            if others_named(val[0]) - heads(A | B | cand(ca, na) | cand(cb, nb)):
+                continue
+            for a in A:
+                for b in B:
+                    if a != b and frozenset((a, b)) not in self.combo_name:
+                        self.combo_name[frozenset((a, b))] = val
+                        self.combo_inferred[frozenset((a, b))] = (ca, cb)
 
     # ── 한글 → 영문 성분 사전: 제품명 '(아세트아미노펜)' + 단일성분 '성분명' 짝으로 학습
     def _build_ko_dict(self):
@@ -310,13 +435,13 @@ class Profile:
     def age_days(self, today=None):
         if not self.birthdate:
             return None
-        return ((today or date.today()) - self.birthdate).days
+        return ((today or today_kst()) - self.birthdate).days
 
     def age_text(self, today=None):
         d = self.age_days(today)
         if d is None:
             return "나이 미입력"
-        t, b = today or date.today(), self.birthdate
+        t, b = today or today_kst(), self.birthdate
         months = (t.year - b.year) * 12 + t.month - b.month - (t.day < b.day)
         if months < 24:
             return f"{months}개월" if months >= 1 else f"{d}일"
@@ -429,12 +554,14 @@ def pair_checks(a: Med, b: Med, data: DURData):
         if hit:
             out.append(_f("병용금기", "금기", [a, b], sorted(a.dur_ingrs | b.dur_ingrs), hit[0], hit[1]))
             banned = True
-    # ② 병용금기 – 성분명으로 (자동 등록 약·추가 성분)
+    # ② 병용금기 – 성분명으로
+    #    DUR 병용금기는 '코드 쌍' 단위로 나열돼 있어서, 같은 성분이라도 함량·복합제마다 코드가 달라
+    #    코드 표에 없는 조합이 많음(예: 로수바스타틴 복합제 + 사이클로스포린).
+    #    코드로 못 찾았으면 모든 성분을 성분명으로 다시 확인함.
     if not banned:
-        sa, sb = _name_scope(a), _name_scope(b)
-        for i in a.ingrs:
-            for j in b.ingrs:
-                if i == j or not (i in sa or j in sb):
+        for i in sorted(a.ingrs):
+            for j in sorted(b.ingrs):
+                if i == j:
                     continue
                 hit = data.combo_name.get(frozenset((i, j)))
                 if hit:

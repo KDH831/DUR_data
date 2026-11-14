@@ -5,7 +5,7 @@ drugs.csv의 '성분명'은 DUR 대상 성분만 담고 있어서(예: 게보린
 
 사용법 (프로젝트 폴더에서):
     set MFDS_API_KEY=발급받은키        (macOS/Linux: export MFDS_API_KEY=...)
-    python tools/build_full_ingredients.py
+    python build_full_ingredients.py
 - 중간에 끊겨도 다시 실행하면 이어서 진행합니다. (개발계정 일일 호출 한도에 주의)
 """
 import csv
@@ -13,11 +13,11 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pandas as pd  # noqa: E402
 import mfds_api  # noqa: E402
 
-BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(BASE, "full_ingredients.csv")
 
 

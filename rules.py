@@ -5,7 +5,8 @@ DUR 공공데이터에는 '병용금기'만 있고, 임상에서 흔히 확인�
 상호작용(예: 와파린 + 소염진통제)은 빠져 있어서 따로 정리한 목록입니다.
 - 성분명은 core.norm_en()으로 정규화된 영문 소문자 기준
 - '~calcium'처럼 물결표로 시작하면 'calcium ...'으로 시작하는 모든 성분
-  (예: calcium carbonate, calcium citrate)
+  (예: calcium carbonate, calcium citrate). 칼슘 판토텐산처럼 칼슘이 '염'일 뿐인 성분은
+  정규화 단계에서 'pantothenate'로 바뀌어 여기에 걸리지 않음
 - 규칙은 일반적인 참고 정보이며, 개인별 판단은 의사·약사가 합니다.
 """
 
@@ -43,7 +44,8 @@ CLASSES = {
         "eprosartan", "fimasartan", "azilsartan"], True, ""),
     "K_SPARING": ("칼륨보존 이뇨제", ["spironolactone", "eplerenone", "amiloride", "triamterene"],
                   False, ""),
-    "K_SUPP": ("칼륨 보충제", ["~potassium"], False, ""),
+    "K_SUPP": ("칼륨 보충제", ["potassium chloride", "potassium citrate", "potassium gluconate",
+                            "potassium bicarbonate", "potassium"], False, ""),
     "DIURETIC": ("이뇨제(루프·티아지드계)", [
         "furosemide", "torsemide", "hydrochlorothiazide", "chlorthalidone", "indapamide"],
         False, ""),

@@ -1,10 +1,10 @@
-"""API 연결 확인용: python tools/test_api.py 게보린정
+"""API 연결 확인용: python test_api.py 게보린정
 응답 원문 일부와 성분 필드를 보여줍니다. 성분이 비어 있으면 mfds_api.py의 URL/INGR_FIELDS를 고치세요."""
 import json, os, sys, tomllib, urllib.parse, urllib.request
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mfds_api
 
-base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+base = os.path.dirname(os.path.abspath(__file__))
 sec = os.path.join(base, ".streamlit", "secrets.toml")
 if not os.environ.get("MFDS_API_KEY") and os.path.exists(sec):
     os.environ["MFDS_API_KEY"] = tomllib.load(open(sec, "rb")).get("MFDS_API_KEY", "")

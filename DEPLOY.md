@@ -2,7 +2,7 @@
 
 ## 1. Supabase (계정·DB) – 무료
 1. supabase.com 가입 → **New project** (Region: Northeast Asia (Seoul)), DB 비밀번호 저장
-2. 왼쪽 **SQL Editor → New query** → `supabase/schema.sql` 내용 전체 붙여넣기 → **Run**
+2. 왼쪽 **SQL Editor → New query** → `schema.sql` 내용 전체 붙여넣기 → **Run**
 3. 왼쪽 **Project Settings → API** (또는 API Keys)에서 3가지 복사
    - Project URL → `SUPABASE_URL`
    - anon / publishable 키 → `SUPABASE_ANON_KEY`

@@ -9,9 +9,13 @@
 import json
 import os
 import sqlite3
-from datetime import date
+from datetime import datetime, timedelta, timezone
 
 DEFAULT_DB = os.environ.get("MEDS_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_data.db"))
+
+
+def _today():
+    return datetime.now(timezone(timedelta(hours=9))).date().isoformat()     # 한국 날짜
 
 
 def _iso(d):
@@ -82,7 +86,7 @@ class LocalStore:
         with self.conn:
             return self.conn.execute(
                 "INSERT OR IGNORE INTO meds (profile_id,product_key,label,times,added_at) VALUES (?,?,?,?,?)",
-                (pid, key, label, json.dumps(times, ensure_ascii=False), date.today().isoformat())).rowcount > 0
+                (pid, key, label, json.dumps(times, ensure_ascii=False), _today())).rowcount > 0
 
     def update_times(self, med_id, times):
         with self.conn:
@@ -128,7 +132,7 @@ class LocalStore:
         with self.conn:
             self.conn.execute("INSERT OR REPLACE INTO drug_cache VALUES (?,?,?,?, 'mfds_api', ?)",
                               (key, name, json.dumps(sorted(ingredients), ensure_ascii=False), raw,
-                               date.today().isoformat()))
+                               _today()))
 
 
 # ══════════════════════════════════════════════════════════════

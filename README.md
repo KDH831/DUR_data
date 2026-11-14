@@ -12,11 +12,11 @@ streamlit run app.py
 | `core.py` | 검사 엔진: 성분명 정규화, 한↔영 성분 사전, 복합제, 모든 검사 |
 | `rules.py` | 앱 자체 '주의' 상호작용·효능군 목록 (DUR 공식 아님, 수정 가능) |
 | `store.py` | 저장: 내 컴퓨터 모드(SQLite) / 웹 모드(Supabase, 계정별 분리 + 공동 약 캐시) |
-| `supabase/schema.sql` | Supabase 테이블·보안 규칙(RLS) |
+| `schema.sql` | Supabase 테이블·보안 규칙(RLS) |
 | `DEPLOY.md` | 웹사이트 배포 방법 |
 | `mfds_api.py` | 식약처 의약품 제품 허가정보 API (선택) |
-| `tools/test_api.py` | 식약처 API 연결 확인 |
-| `tools/build_full_ingredients.py` | 전체 주성분을 미리 한꺼번에 받기 (선택, 앱은 약 추가 시 자동으로 받음) |
+| `test_api.py` | 식약처 API 연결 확인 |
+| `build_full_ingredients.py` | 전체 주성분을 미리 한꺼번에 받기 (선택, 앱은 약 추가 시 자동으로 받음) |
 | `*.csv` | 식약처 DUR 데이터 (2026년 6월 기준) |
 
 ## 검사 항목

@@ -5,7 +5,7 @@ import streamlit as st
 
 import mfds_api
 from core import (DURData, Med, Profile, analyze_all, med_from_cache, norm_drug_name, note_med,
-                  pair_checks, short_name, single_checks)
+                  pair_checks, short_name, single_checks, today_kst)
 from rules import CLASSES
 from store import LocalStore, SupabaseStore
 
@@ -28,6 +28,8 @@ def secret(name):
 
 
 SB_URL, SB_ANON, SB_SERVICE = secret("SUPABASE_URL"), secret("SUPABASE_ANON_KEY"), secret("SUPABASE_SERVICE_KEY")
+# 'https://xxx.supabase.co/rest/v1/'처럼 뒤에 경로가 붙어 있어도 프로젝트 주소만 쓰도록 정리
+SB_URL = SB_URL.strip().rstrip("/").removesuffix("/rest/v1").removesuffix("/auth/v1").rstrip("/")
 ONLINE = bool(SB_URL and SB_ANON)       # Supabase 설정이 있으면 웹(계정) 모드, 없으면 내 컴퓨터 모드
 
 
@@ -163,7 +165,7 @@ def profile_form(p=None, key="new"):
     with st.form(f"profile_{key}"):
         name = st.text_input("이름(별칭)", value=p.get("name", ""), placeholder="예: 나, 어머니")
         bd = date.fromisoformat(p["birthdate"]) if p.get("birthdate") else None
-        birth = st.date_input("생년월일", value=bd, min_value=date(1900, 1, 1), max_value=date.today(),
+        birth = st.date_input("생년월일", value=bd, min_value=date(1900, 1, 1), max_value=today_kst(),
                               format="YYYY-MM-DD", help="영유아는 개월 수까지 정확히 계산돼요.")
         preg = st.checkbox("임신 중이거나 임신 가능성이 있음", value=bool(p.get("pregnant")))
         crush = st.checkbox("알약을 쪼개거나 갈아서 먹음 (삼키기 어려움)", value=bool(p.get("crush")))
@@ -210,7 +212,7 @@ with st.sidebar:
     prof = Profile(name=prow["name"],
                    birthdate=date.fromisoformat(prow["birthdate"]) if prow["birthdate"] else None,
                    pregnant=bool(prow["pregnant"]), crush=bool(prow["crush"]), avoid=list(prow["avoid"]))
-    st.write(f"**{prof.age_text()}**" + (" · 임신 중" if prof.pregnant else ""))
+    st.write(f"**{prof.age_text(today_kst())}**" + (" · 임신 중" if prof.pregnant else ""))
     if prof.avoid:
         st.caption("피할 성분: " + ", ".join(avoid_label(a) for a in prof.avoid))
     st.caption("프로필 수정·추가는 '👤 프로필' 탭에서 할 수 있어요.")
@@ -238,8 +240,14 @@ with st.sidebar:
 # ─────────────────────────────────────────
 # 3. 내 약 불러오기
 # ─────────────────────────────────────────
+def renorm(rec):
+    """공동 캐시의 성분명을 현재 정규화 규칙으로 다시 맞춤 (규칙이 바뀌어도 예전 캐시가 그대로 쓰이도록)"""
+    return dict(rec) | {"ingredients": sorted({data.normalize(x) for x in rec["ingredients"]} - {""})}
+
+
 rows = store.meds(pid)
-cache = store.cache_get(r["product_key"] for r in rows if not r["product_key"].startswith("note:"))
+cache = {k: renorm(v) for k, v in
+         store.cache_get(r["product_key"] for r in rows if not r["product_key"].startswith("note:")).items()}
 
 
 def to_med(key, label=None):
@@ -280,7 +288,7 @@ for r in rows:
         m.times, m.med_id = r["times"], r["id"]
         my.append(m)
 meds = [m for m in my if m.ingrs]          # 성분을 알아야 검사 가능
-findings = analyze_all(meds, prof, data)
+findings = analyze_all(meds, prof, data, today_kst())
 
 st.title("💊 내 약 지킴이")
 st.write("복용 중인 약을 등록하면 복약 시간을 관리하고, "
@@ -291,7 +299,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["📝 내 약 등록", "✅ 오늘의 복약",
 
 def preview(cand):
     """등록 전 미리보기 경고"""
-    pre = single_checks(cand, prof, data) if cand.ingrs else []
+    pre = single_checks(cand, prof, data, today_kst()) if cand.ingrs else []
     for d in meds:
         if d.key != cand.key and cand.ingrs:
             pre += pair_checks(cand, d, data)
@@ -325,7 +333,7 @@ with tab1:
     if len(keyword.strip()) >= 2:
         kw = keyword.strip()
         found = data.search(kw)
-        cached = store.cache_search(kw)                      # 이전에 식약처에서 받아 둔 약 (공동 DB)
+        cached = [renorm(r) for r in store.cache_search(kw)]  # 이전에 식약처에서 받아 둔 약 (공동 DB)
         options = [("cache", r["key"]) for r in cached] + [("dur", c) for c in found["제품코드"]]
         api_res = []
         if not options and API_ON:                           # DUR·공동 DB에 없으면 식약처에 자동 조회
@@ -416,7 +424,7 @@ with tab1:
 # 5. 탭2: 오늘의 복약 (날짜별 저장)
 # ─────────────────────────────────────────
 with tab2:
-    today = date.today().isoformat()
+    today = today_kst().isoformat()
     st.subheader(f"오늘의 복약 체크리스트 ({today})")
     taken = store.taken(pid, today)
 
@@ -446,7 +454,7 @@ with tab2:
         elif done < total:
             st.session_state[flag] = False
 
-        days = [(date.today() - timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
+        days = [(today_kst() - timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
         cnt = store.intake_counts(pid, days)
         chart = pd.DataFrame({"날짜": [x[5:] for x in days],
                               "복용률(%)": [round(100 * cnt.get(x, 0) / total) for x in days]}).set_index("날짜")
@@ -490,7 +498,7 @@ with tab3:
                 text += f"\n\n👉 **어떻게 하나요?** {info['todo']}"
                 box(text)
 
-        if prof.age_days() is not None and prof.age_days() < 65 * 365.25:
+        if prof.age_days(today_kst()) is not None and prof.age_days(today_kst()) < 65 * 365.25:
             st.caption("※ 노인주의 항목은 나이가 65세 이상일 때만 확인합니다.")
         if not prof.pregnant:
             st.caption("※ 임부금기 항목은 프로필에서 '임신 중'을 선택했을 때만 확인합니다.")
