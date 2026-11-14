@@ -43,7 +43,7 @@ def _items(data):
 
 
 def search(name, rows=20, timeout=10):
-    """반환: [{'name', 'item_seq', 'ingredients_raw'}]. 키가 없으면 [], 통신 실패 시 예외"""
+    """반환: [{'name', 'item_seq', 'ingredients_raw', 'company'}]. 키가 없으면 [], 통신 실패 시 예외"""
     key = get_key()
     if not key:
         return []
@@ -56,5 +56,5 @@ def search(name, rows=20, timeout=10):
         nm = it.get("ITEM_NAME") or it.get("item_name")
         if nm and raw:
             out.append({"name": nm, "item_seq": str(it.get("ITEM_SEQ") or it.get("PRDLST_STDR_CODE") or ""),
-                        "ingredients_raw": raw})
+                        "ingredients_raw": raw, "company": it.get("ENTP_NAME") or ""})
     return out

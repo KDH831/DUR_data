@@ -1,4 +1,5 @@
 import re
+from collections import defaultdict
 from datetime import date, timedelta
 
 import pandas as pd
@@ -300,6 +301,23 @@ def enrich_full_ingredients(code, pname):
             return
 
 
+
+def same_name(n):
+    """'조코정20밀리그램(심바스타틴)_(20mg/1정)'과 식약처 '조코정20밀리그램(심바스타틴)'을 같은 제품으로 보기 위한 비교용 이름"""
+    return re.sub(r"\(.*?\)|\[.*?\]|\s", "", short_name(n)).replace("밀리그람", "밀리그램").lower()
+
+
+@st.cache_resource
+def dur_by_name():
+    """비교용 이름 → DUR 제품코드. 같은 이름에 성분코드가 여러 개면(주사제 포장별 등) 연결하지 않음"""
+    codes, ingr = {}, defaultdict(set)
+    for code, name, icode in zip(data.drugs["제품코드"], data.drugs["제품명"], data.drugs["성분코드"]):
+        k = same_name(name)
+        codes.setdefault(k, code)
+        ingr[k].add(icode)
+    return {k: c for k, c in codes.items() if len(ingr[k]) == 1}
+
+
 my = []
 for r in rows:
     m = to_med(r["product_key"], r.get("label"))
@@ -351,58 +369,56 @@ with tab1:
                             placeholder="예: 타이레놀, 세레콕시브, 아스피린, celecoxib")
     if len(keyword.strip()) >= 2:
         kw = keyword.strip()
-        found = data.search(kw)
-        cached = [renorm(r) for r in store.cache_search(kw)]  # 이전에 식약처에서 받아 둔 약 (공동 DB)
-        options = [("cache", r["key"]) for r in cached] + [("dur", c) for c in found["제품코드"]]
-        api_res = []
-        # 식약처 조회는 '식약처에서 더 찾기'를 눌렀을 때만 (오타로 바로 넘어가지 않게, 호출 한도 절약)
-        more = st.session_state.get("more_q") == kw
-        if more and API_ON:
-            if st.session_state.get("api_q") != kw:
-                try:
-                    with st.spinner("식약처 허가정보에서 찾는 중..."):
-                        st.session_state.api_res = mfds_api.search(kw)
-                except Exception as e:
-                    st.session_state.api_res = []
-                    st.error(f"식약처 조회에 실패했어요. 잠시 후 다시 시도해 주세요. ({e})")
-                st.session_state.api_q = kw
-            have = {r["key"] for r in cached}                 # 공동 DB에 이미 있는 제품은 중복으로 보이지 않게
-            same = lambda n: re.sub(r"\(.*?\)|\[.*?\]|\s", "", n).replace("밀리그람", "밀리그램").lower()
-            dur_names = {same(short_name(n)) for n in found["제품명"]}   # DUR 목록에 있는 같은 제품도 제외
-            api_res = [r for r in st.session_state.get("api_res", [])
-                       if data.parse_ingredients(r["ingredients_raw"])
-                       and f"api-{r['item_seq'] or norm_drug_name(r['name'])}" not in have
-                       and same(r["name"]) not in dur_names]
-            options += [("api", i) for i in range(len(api_res))]
-            if more and not api_res and st.session_state.get("api_q") == kw:
-                st.caption("식약처에서 추가로 찾은 약이 없어요.")
+        # 약 정보는 식약처 허가정보에서 찾음 (허가된 모든 의약품 + 전체 주성분).
+        # 같은 제품이 DUR 목록에도 있으면 DUR 성분코드를 붙여 병용금기 등을 코드로 정확히 검사.
+        # 식약처에 결과가 없으면(성분명으로 검색한 경우 등) 기존 DUR 목록·공동 DB에서 찾음.
+        if API_ON and st.session_state.get("api_q") != kw:   # 같은 검색어는 한 번만 조회
+            st.session_state.api_res, st.session_state.api_fail = [], False
+            try:
+                with st.spinner("식약처 허가정보에서 찾는 중..."):
+                    st.session_state.api_res = mfds_api.search(kw, rows=50)
+            except Exception:
+                st.session_state.api_fail = True
+            st.session_state.api_q = kw
+        api_res = [r for r in (st.session_state.get("api_res", []) if API_ON else [])
+                   if data.parse_ingredients(r["ingredients_raw"])]
+
+        by_name = dur_by_name()
+        api_for_code, options = {}, []
+        for i, r in enumerate(api_res):
+            code = by_name.get(same_name(r["name"]))
+            if code and code not in api_for_code:            # DUR 목록에 있는 제품 → 코드로 검사
+                api_for_code[code] = i
+                options.append(("dur", code))
+            elif not code:
+                options.append(("api", i))
+
+        cached = []
+        if not options:                                      # 식약처에 없으면 기존 목록에서
+            if API_ON and st.session_state.get("api_fail"):
+                st.caption("식약처 조회가 잠시 안 돼서 저장된 목록에서 찾았어요.")
+            cached = [renorm(r) for r in store.cache_search(kw)]
+            options = [("cache", r["key"]) for r in cached] + [("dur", c) for c in data.search(kw)["제품코드"]]
         cmap = {r["key"]: r for r in cached}
-        fmap = found.set_index("제품코드")
 
         def label(o):
             try:
                 if o[0] == "cache":
-                    return f"{cmap[o[1]]['name']}  ·  식약처 허가정보"
+                    return cmap[o[1]]["name"]
                 if o[0] == "api":
-                    return f"{api_res[o[1]]['name']}  ·  식약처 허가정보"
-                return f"{fmap.loc[o[1], '제품명']}  ·  {fmap.loc[o[1], '업체명']}"
-            except (KeyError, IndexError):       # 이전 화면의 선택값이 남아 있을 때
+                    r_ = api_res[o[1]]
+                    return f"{r_['name']}  ·  {r_['company']}" if r_.get("company") else r_["name"]
+                row = data.product_row(o[1])
+                return f"{row['제품명']}  ·  {row['업체명']}"
+            except (KeyError, IndexError, TypeError):  # 이전 화면의 선택값이 남아 있을 때
                 return str(o[1])
-
-        def more_button():
-            if API_ON and not more:
-                if st.button("🔍 찾는 약이 목록에 없나요? 식약처에서 더 찾기", key="more_btn"):
-                    st.session_state.more_q = kw
-                    st.rerun()
 
         if not options:
             st.info("찾는 약이 없어요. 이름을 다시 확인하거나(예: '정', '캡슐' 빼고 검색), 영양제·건강기능식품이면 "
-                    "아래 '영양제 등 추가'를 이용하세요." +
-                    ("" if API_ON else " (식약처 API 키를 설정하면 DUR 목록 밖의 약도 찾아요.)"))
-            more_button()                                    # 이름이 맞으면 그때 식약처에서 찾기
+                    "아래 '영양제 등 추가'를 이용하세요.")
         else:
-            more_button()
             sel = st.selectbox(f"검색 결과 {len(options)}건", options, format_func=label)
+            r = None
             if sel[0] == "api":
                 r = api_res[sel[1]]
                 cand = Med(key=f"api-{r['item_seq'] or norm_drug_name(r['name'])}", name=r["name"],
@@ -411,13 +427,18 @@ with tab1:
                 cand = med_from_cache(cmap[sel[1]])
             else:
                 cand = to_med(sel[1])
+                if sel[1] in api_for_code:                   # 식약처의 전체 주성분으로 복합제 성분 보충
+                    r = api_res[api_for_code[sel[1]]]
+                    full = set(data.parse_ingredients(r["ingredients_raw"]))
+                    cand.extra_ingrs = frozenset(set(cand.extra_ingrs) | (full - set(cand.dur_ingrs)))
             if cand.ingrs:
                 st.caption("🧪 성분: " + ", ".join(data.label(i) for i in sorted(cand.ingrs)))
             preview(cand)
             times = st.multiselect("복용 시간", TIMES, default=["아침"], key="t_search")
             if st.button("➕ 내 약에 추가", type="primary"):
-                if sel[0] == "api":                          # 공식 데이터만 공동 DB에 저장
-                    store.cache_put(cand.key, cand.name, sorted(cand.ingrs), r["ingredients_raw"])
+                if r is not None:                            # 식약처 공식 데이터만 공동 DB에 저장
+                    store.cache_put(cand.key, r["name"], data.parse_ingredients(r["ingredients_raw"]),
+                                    r["ingredients_raw"])
                 elif sel[0] == "dur":
                     enrich_full_ingredients(cand.key, cand.name)
                 if store.add_med(pid, cand.key, times):
