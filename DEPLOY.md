@@ -29,3 +29,21 @@
 | drug_cache | 모두 읽기 / 앱 서버만 쓰기 | 식약처 허가정보 API에서 받은 공식 성분 정보 |
 
 공개 서비스로 운영하려면 개인정보 처리방침(수집 항목: 이메일, 생년월일, 복용약, 임신 여부 등)을 마련하세요.
+
+## 비밀번호 재설정 메일 설정 (필수, 한 번만)
+앱은 Streamlit 특성상 Supabase 기본 재설정 링크를 읽을 수 없어서 메일 내용을 바꿔야 합니다.
+1. Supabase → **Authentication → Emails → Templates → Reset password** (메뉴 이름: Reset Password / 비밀번호 재설정)
+2. Subject: `[내 약 지킴이] 비밀번호 재설정`
+3. Body를 아래로 바꾸고 **Save**
+```html
+<h2>비밀번호 재설정</h2>
+<p>아래 버튼을 누르면 새 비밀번호를 설정할 수 있어요.</p>
+<p><a href="{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=recovery">새 비밀번호 설정하기</a></p>
+<p>또는 앱의 '비밀번호를 잊으셨나요?'에 이 코드를 입력하세요: <b>{{ .Token }}</b></p>
+<p>요청하지 않았다면 이 메일을 무시하세요.</p>
+```
+4. **Authentication → URL Configuration → Site URL**이 앱 주소(https://team1medicineguard.streamlit.app)인지 확인
+
+## 회원 탈퇴
+'👤 프로필' 탭 맨 아래. 비밀번호 확인 후 `SUPABASE_SERVICE_KEY`로 계정을 삭제하며,
+profiles·meds·intake는 DB 규칙(on delete cascade)으로 함께 삭제됩니다.

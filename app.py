@@ -112,8 +112,79 @@ def keep_cookie(cm):
            secure=True, same_site="lax")
 
 
+def finish_login(client, email, remember):
+    st.session_state.sb, st.session_state.sb_email = client, email
+    st.session_state.remember = remember
+    st.session_state.pop("no_auto", None)
+
+
+def password_recovery():
+    """비밀번호 재설정: 메일 링크(?token_hash=…&type=recovery) 또는 메일의 6자리 코드로 본인 확인 →
+    새 비밀번호 입력. Supabase 'Reset password' 메일 템플릿 수정이 필요함 (DEPLOY.md 참고)"""
+    from supabase import create_client
+    qp = st.query_params
+    if qp.get("type") == "recovery" and qp.get("token_hash") and "rec_client" not in st.session_state:
+        client = create_client(SB_URL, SB_ANON)
+        try:
+            client.auth.verify_otp({"token_hash": qp["token_hash"], "type": "recovery"})
+            st.session_state.rec_client = client
+        except Exception:
+            st.session_state.rec_error = True
+        st.query_params.clear()
+    if st.session_state.pop("rec_error", False):
+        st.error("재설정 링크가 만료됐거나 이미 사용됐어요. 로그인 화면의 '비밀번호를 잊으셨나요?'에서 다시 요청해 주세요.")
+    if "rec_client" not in st.session_state:
+        return
+    st.title("🔑 새 비밀번호 설정")
+    with st.form("new_pw"):
+        pw = st.text_input("새 비밀번호 (8자 이상)", type="password")
+        pw2 = st.text_input("새 비밀번호 확인", type="password")
+        if st.form_submit_button("변경하기", type="primary"):
+            if len(pw) < 8 or pw != pw2:
+                st.error("비밀번호는 8자 이상이고, 두 번 똑같이 입력해야 해요.")
+            else:
+                client = st.session_state.rec_client
+                try:
+                    res = client.auth.update_user({"password": pw})
+                    del st.session_state.rec_client
+                    finish_login(client, res.user.email, False)
+                    st.session_state.flash = "비밀번호를 바꿨어요."
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"비밀번호를 바꾸지 못했어요. ({e})")
+    if st.button("취소"):
+        del st.session_state.rec_client
+        st.rerun()
+    st.stop()
+
+
+def forgot_password_box():
+    from supabase import create_client
+    with st.expander("비밀번호를 잊으셨나요?"):
+        email = st.text_input("가입한 이메일", key="fp_email")
+        if st.button("재설정 메일 보내기", key="fp_send"):
+            try:
+                create_client(SB_URL, SB_ANON).auth.reset_password_for_email(email.strip())
+            except Exception as e:
+                if "rate" in str(e).lower() or "429" in str(e):
+                    st.error("메일을 너무 자주 요청했어요. 잠시 후 다시 시도해 주세요.")
+                    return
+            # 가입 여부를 알려주지 않음 (다른 사람이 이메일 가입 여부를 알아내지 못하게)
+            st.success("가입된 이메일이라면 재설정 메일을 보냈어요. 메일의 링크를 누르거나, 아래에 6자리 코드를 입력하세요.")
+        code = st.text_input("메일로 받은 6자리 코드", key="fp_code", max_chars=6)
+        if st.button("코드 확인", key="fp_verify"):
+            client = create_client(SB_URL, SB_ANON)
+            try:
+                client.auth.verify_otp({"email": email.strip(), "token": code.strip(), "type": "recovery"})
+                st.session_state.rec_client = client
+                st.rerun()
+            except Exception:
+                st.error("코드가 맞지 않거나 만료됐어요. 이메일과 코드를 다시 확인해 주세요.")
+
+
 def login_gate(cm):
     """로그인 전이면 로그인/회원가입 화면을 보여주고 멈춤"""
+    password_recovery()
     if st.session_state.get("sb_email") or restore_login(cm):
         return
     if st.session_state.get("no_auto"):
@@ -121,6 +192,8 @@ def login_gate(cm):
     from supabase import create_client
     st.title("💊 내 약 지킴이")
     st.write("내 약과 가족의 약을 계정에 안전하게 저장해요. 다른 사람은 내 정보를 볼 수 없어요.")
+    if msg := st.session_state.pop("flash", None):
+        st.success(msg)
     t_in, t_up = st.tabs(["로그인", "회원가입"])
     with t_in, st.form("login"):
         email = st.text_input("이메일")
@@ -138,6 +211,8 @@ def login_gate(cm):
             except Exception as e:
                 st.error("로그인하지 못했어요. 이메일·비밀번호를 확인하거나, 가입 확인 메일의 링크를 "
                          f"먼저 눌러 주세요. ({e})")
+    with t_in:
+        forgot_password_box()
     with t_up, st.form("signup"):
         email = st.text_input("이메일", key="su_email")
         pw = st.text_input("비밀번호 (8자 이상)", type="password", key="su_pw")
@@ -172,6 +247,12 @@ if ONLINE:
 else:
     store = local_store()
 API_ON = bool(mfds_api.get_key())
+
+
+@st.cache_data(ttl=24 * 3600, max_entries=5000, show_spinner=False)
+def api_search(q, rows=50):
+    """식약처 조회 결과를 모든 사용자가 하루 동안 공유 (하루 호출 한도 절약). 실패(예외)는 저장 안 됨"""
+    return mfds_api.search(q, rows=rows)
 TIMES = ["아침", "점심", "저녁", "자기 전"]
 
 # 경고 종류별 아이콘, 등급, 설명, 행동 요령
@@ -401,7 +482,7 @@ def enrich_full_ingredients(code, pname):
     if not API_ON or code in cache:
         return
     try:
-        res = mfds_api.search(short_name(pname), rows=10)
+        res = api_search(short_name(pname), rows=10)
     except Exception:
         return
     target = norm_drug_name(short_name(pname))
@@ -487,7 +568,7 @@ with tab1:
             st.session_state.api_res, st.session_state.api_fail = [], False
             try:
                 with st.spinner("식약처 허가정보에서 찾는 중..."):
-                    st.session_state.api_res = mfds_api.search(kw, rows=50)
+                    st.session_state.api_res = api_search(kw, rows=50)
             except Exception:
                 st.session_state.api_fail = True
             st.session_state.api_q = kw
@@ -504,12 +585,16 @@ with tab1:
             elif not code:
                 options.append(("api", i))
 
-        cached = []
-        if not options:                                      # 식약처에 없으면 기존 목록에서
-            if API_ON and st.session_state.get("api_fail"):
-                st.caption("식약처 조회가 잠시 안 돼서 저장된 목록에서 찾았어요.")
-            cached = [renorm(r) for r in store.cache_search(kw)]
-            options = [("cache", r["key"]) for r in cached] + [("dur", c) for c in data.search(kw)["제품코드"]]
+        # 식약처 결과 뒤에 DUR 목록·공동 DB 결과도 붙임
+        # (성분명 검색 시 이름에 성분이 안 들어간 제품, 식약처 장애 시 대비)
+        if API_ON and st.session_state.get("api_fail"):
+            st.caption("식약처 조회가 잠시 안 돼서 저장된 목록에서 찾았어요.")
+        api_keys = {f"api-{api_res[o[1]]['item_seq'] or norm_drug_name(api_res[o[1]]['name'])}"
+                    for o in options if o[0] == "api"}
+        cached = [renorm(r) for r in store.cache_search(kw) if r["key"] not in api_keys]
+        options += [("cache", r["key"]) for r in cached]
+        seen = {o[1] for o in options if o[0] == "dur"}
+        options += [("dur", c) for c in data.search(kw)["제품코드"] if c not in seen]
         cmap = {r["key"]: r for r in cached}
 
         def label(o):
@@ -693,3 +778,36 @@ with tab4:
             store.delete_profile(pid)
             st.session_state.pop("pid", None)
             st.rerun()
+    if ONLINE:
+        with st.expander("⚠️ 회원 탈퇴"):
+            st.write("계정과 모든 프로필·복용약·복약 기록이 **즉시 영구 삭제**되고 되돌릴 수 없어요. "
+                     "(식약처에서 받아 둔 공동 약 정보는 개인정보가 아니라 남아요.)")
+            with st.form("withdraw"):
+                pw = st.text_input("본인 확인을 위해 비밀번호를 입력하세요", type="password")
+                ok = st.checkbox("모든 데이터가 삭제되는 것을 확인했어요.")
+                if st.form_submit_button("회원 탈퇴", type="primary"):
+                    admin = admin_client()
+                    if not ok:
+                        st.error("확인란을 체크해 주세요.")
+                    elif admin is None:
+                        st.error("서버 설정(SUPABASE_SERVICE_KEY)이 없어 탈퇴를 처리할 수 없어요. 관리자에게 문의하세요.")
+                    else:
+                        from supabase import create_client
+                        try:                              # 비밀번호로 본인 확인
+                            res = create_client(SB_URL, SB_ANON).auth.sign_in_with_password(
+                                {"email": st.session_state.sb_email, "password": pw})
+                        except Exception:
+                            res = None
+                        if not res or not res.user:
+                            st.error("비밀번호가 맞지 않아요.")
+                        else:
+                            try:
+                                admin.auth.admin.delete_user(res.user.id)   # 프로필·약·기록은 DB에서 함께 삭제(cascade)
+                            except Exception as e:
+                                st.error(f"탈퇴를 처리하지 못했어요. 잠시 후 다시 시도해 주세요. ({e})")
+                                st.stop()
+                            for k in list(st.session_state):
+                                del st.session_state[k]
+                            st.session_state.no_auto = True       # 쿠키 지우고 자동 로그인 안 함
+                            st.session_state.flash = "탈퇴가 완료됐어요. 그동안 이용해 주셔서 고마워요."
+                            st.rerun()

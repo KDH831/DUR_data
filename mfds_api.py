@@ -42,8 +42,17 @@ def _items(data):
     return [i.get("item", i) if isinstance(i, dict) else i for i in items]
 
 
-def search(name, rows=20, timeout=10):
-    """반환: [{'name', 'item_seq', 'ingredients_raw', 'company'}]. 키가 없으면 [], 통신 실패 시 예외"""
+def is_active(it):
+    """허가가 살아 있는 품목인지. 취소·취하 품목은 CANCEL_DATE/CANCEL_NAME에 값이 있음
+    (필드가 아예 없으면 정상으로 봄 → python test_api.py 로 실제 필드 확인 권장)"""
+    status = str(it.get("CANCEL_NAME") or "").strip()
+    cdate = str(it.get("CANCEL_DATE") or "").strip()
+    return not cdate and status in ("", "정상")
+
+
+def search(name, rows=20, timeout=10, include_inactive=False):
+    """반환: [{'name', 'item_seq', 'ingredients_raw', 'company', 'active'}]. 키가 없으면 [], 통신 실패 시 예외
+    기본값은 허가 취소·취하 품목을 빼고 돌려줌"""
     key = get_key()
     if not key:
         return []
@@ -54,7 +63,8 @@ def search(name, rows=20, timeout=10):
     for it in _items(data):
         raw = next((it[f] for f in INGR_FIELDS if it.get(f)), "")
         nm = it.get("ITEM_NAME") or it.get("item_name")
-        if nm and raw:
+        active = is_active(it)
+        if nm and raw and (active or include_inactive):
             out.append({"name": nm, "item_seq": str(it.get("ITEM_SEQ") or it.get("PRDLST_STDR_CODE") or ""),
-                        "ingredients_raw": raw, "company": it.get("ENTP_NAME") or ""})
+                        "ingredients_raw": raw, "company": it.get("ENTP_NAME") or "", "active": active})
     return out

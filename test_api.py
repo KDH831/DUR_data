@@ -15,6 +15,10 @@ print("── 응답 원문(앞부분) ──\n", raw[:1500])
 try:
     items = mfds_api._items(json.loads(raw))
     print("\n── 첫 항목의 필드 ──\n", list(items[0].keys()) if items else "항목 없음")
+    print("\n── 허가 상태 (취소·취하 확인용) ──")
+    for it in items:
+        print(" ", it.get("ITEM_NAME"), "| CANCEL_NAME:", it.get("CANCEL_NAME"), "| CANCEL_DATE:",
+              it.get("CANCEL_DATE"), "→", "정상" if mfds_api.is_active(it) else "제외")
     print("\n── 파싱 결과 ──\n", mfds_api.search(name, rows=3))
 except Exception as e:
     print("JSON 파싱 실패:", e)
