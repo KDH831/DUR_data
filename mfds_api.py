@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 
 URL = os.environ.get("MFDS_API_URL",
-                     "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07/getDrugPrdtPrmsnInq07")
+                     "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService08/getDrugPrdtPrmsnInq08")
 INGR_FIELDS = ["ITEM_INGR_NAME", "MAIN_ITEM_INGR", "MAIN_INGR_ENG", "MATERIAL_NAME", "INGR_NAME"]
 
 
