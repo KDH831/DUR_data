@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -48,10 +48,76 @@ def admin_client():
     return create_client(SB_URL, SB_SERVICE)
 
 
-def login_gate():
-    """로그인 전이면 로그인/회원가입 화면을 보여주고 멈춤"""
-    if st.session_state.get("sb_email"):
+# ── 로그인 상태 유지: Supabase의 '로그인 유지용 토큰(refresh token)'을 브라우저 쿠키에 저장
+COOKIE = "medguard_session"
+REMEMBER_DAYS = 30
+
+
+def cookie_manager():
+    import extra_streamlit_components as stx
+    return stx.CookieManager(key="cookies")
+
+
+def saved_token(cm):
+    """쿠키에 저장된 토큰 (페이지를 열 때 브라우저가 보낸 쿠키 → 없으면 쿠키 컴포넌트에서)"""
+    try:
+        t = st.context.cookies.get(COOKIE)
+    except Exception:
+        t = None
+    return t if isinstance(t, str) and t else cm.get(COOKIE)
+
+
+def forget_cookie(cm):
+    try:
+        cm.delete(COOKIE, key="cookie_del")
+    except KeyError:                    # 컴포넌트가 아직 쿠키 목록을 못 읽은 경우
+        pass
+
+
+def restore_login(cm):
+    """새로고침·재접속 시 쿠키의 토큰으로 자동 로그인"""
+    if st.session_state.get("no_auto"):          # 방금 로그아웃함
+        return False
+    rt = saved_token(cm)
+    if not rt:
+        return False
+    from supabase import create_client
+    client = create_client(SB_URL, SB_ANON)
+    try:
+        res = client.auth.refresh_session(rt)
+    except Exception:                            # 만료·로그아웃된 토큰
+        forget_cookie(cm)
+        return False
+    if not res or not res.session:
+        forget_cookie(cm)
+        return False
+    st.session_state.sb, st.session_state.sb_email = client, res.session.user.email
+    st.session_state.remember = True
+    return True
+
+
+def keep_cookie(cm):
+    """로그인 상태 유지를 선택했으면 최신 토큰을 쿠키에 저장 (토큰은 주기적으로 바뀜)"""
+    if not st.session_state.get("remember"):
         return
+    try:
+        sess = st.session_state.sb.auth.get_session()   # 만료가 가까우면 여기서 새 토큰으로 바뀜
+    except Exception:
+        return
+    if not sess:
+        return
+    if "cookie_exp" not in st.session_state:
+        st.session_state.cookie_exp = datetime.now() + timedelta(days=REMEMBER_DAYS)
+    cm.set(COOKIE, sess.refresh_token, key="cookie_set", expires_at=st.session_state.cookie_exp,
+           secure=True, same_site="lax")
+
+
+def login_gate(cm):
+    """로그인 전이면 로그인/회원가입 화면을 보여주고 멈춤"""
+    if st.session_state.get("sb_email") or restore_login(cm):
+        return
+    if st.session_state.get("no_auto"):
+        forget_cookie(cm)                        # 로그아웃 후 쿠키 지우기
     from supabase import create_client
     st.title("💊 내 약 지킴이")
     st.write("내 약과 가족의 약을 계정에 안전하게 저장해요. 다른 사람은 내 정보를 볼 수 없어요.")
@@ -59,11 +125,15 @@ def login_gate():
     with t_in, st.form("login"):
         email = st.text_input("이메일")
         pw = st.text_input("비밀번호", type="password")
+        remember = st.checkbox("로그인 상태 유지", value=True,
+                               help=f"{REMEMBER_DAYS}일 동안 다시 로그인하지 않아도 돼요. 여러 사람이 쓰는 컴퓨터에서는 해제하세요.")
         if st.form_submit_button("로그인", type="primary"):
             client = create_client(SB_URL, SB_ANON)
             try:
                 res = client.auth.sign_in_with_password({"email": email.strip(), "password": pw})
                 st.session_state.sb, st.session_state.sb_email = client, res.user.email
+                st.session_state.remember = remember
+                st.session_state.pop("no_auto", None)
                 st.rerun()
             except Exception as e:
                 st.error("로그인하지 못했어요. 이메일·비밀번호를 확인하거나, 가입 확인 메일의 링크를 "
@@ -84,6 +154,8 @@ def login_gate():
                     res = client.auth.sign_up({"email": email.strip(), "password": pw})
                     if res.session:
                         st.session_state.sb, st.session_state.sb_email = client, res.user.email
+                        st.session_state.remember = True
+                        st.session_state.pop("no_auto", None)
                         st.rerun()
                     st.success("가입 확인 메일을 보냈어요. 메일의 링크를 누른 뒤 로그인해 주세요.")
                 except Exception as e:
@@ -93,7 +165,9 @@ def login_gate():
 
 data = load_data()
 if ONLINE:
-    login_gate()
+    cookies = cookie_manager()
+    login_gate(cookies)
+    keep_cookie(cookies)
     store = SupabaseStore(st.session_state.sb, admin_client())
 else:
     store = local_store()
@@ -161,53 +235,89 @@ AVOID_OPTIONS = [f"class:{k}" for k, v in CLASSES.items() if v[2] or k in ("K_SU
     + data.vocab
 
 
+def check_profile(name, y, m, d, extra, avoid):
+    """입력값 확인 → (오류 문구, 생년월일, 기피 목록)"""
+    if not name.strip():
+        return "이름을 입력해 주세요.", None, None
+    if not (y and m and d):
+        return "생년월일(연도·월·일)을 모두 골라 주세요. 연령·노인 주의 확인에 필요해요.", None, None
+    try:
+        birth = date(y, m, d)
+    except ValueError:
+        return f"{y}년 {m}월에는 {d}일이 없어요. 날짜를 다시 확인해 주세요.", None, None
+    if birth > today_kst():
+        return "생년월일이 오늘보다 뒤예요. 날짜를 다시 확인해 주세요.", None, None
+    typed = [data.normalize(x) for x in extra.split(",") if x.strip()]
+    return None, birth, list(dict.fromkeys(avoid + typed))
+
+
+def profile_fields(p, key, on_change=None, args=()):
+    """프로필 입력칸. on_change가 있으면 칸을 바꿀 때마다 호출(자동 저장)"""
+    kw = dict(on_change=on_change, args=args) if on_change else {}
+    name = st.text_input("이름(별칭)", value=p.get("name", ""), placeholder="예: 나, 어머니",
+                         key=f"pn_{key}", **kw)
+    bd = date.fromisoformat(p["birthdate"]) if p.get("birthdate") else None
+    # 달력 위젯은 연도를 10년씩만 보여줘서 어르신 생년을 고르기 어려움 → 연·월·일을 각각 고름
+    # (연도 칸에 '1945'처럼 숫자를 입력하면 바로 찾아짐)
+    st.markdown("**생년월일**", help="영유아는 개월 수까지 정확히 계산돼요. "
+                "연도 칸을 누르고 '1945'처럼 숫자를 입력하면 바로 찾을 수 있어요.")
+    years = list(range(today_kst().year, 1899, -1))
+    cy, cm, cd = st.columns([2, 1, 1])
+    y = cy.selectbox("연도", years, index=years.index(bd.year) if bd else None,
+                     format_func=lambda v: f"{v}년", placeholder="연도 선택", key=f"by_{key}", **kw)
+    m = cm.selectbox("월", list(range(1, 13)), index=bd.month - 1 if bd else None,
+                     format_func=lambda v: f"{v}월", placeholder="월", key=f"bm_{key}", **kw)
+    d = cd.selectbox("일", list(range(1, 32)), index=bd.day - 1 if bd else None,
+                     format_func=lambda v: f"{v}일", placeholder="일", key=f"bd_{key}", **kw)
+    preg = st.checkbox("임신 중이거나 임신 가능성이 있음", value=bool(p.get("pregnant")),
+                       key=f"pp_{key}", **kw)
+    crush = st.checkbox("알약을 쪼개거나 갈아서 먹음 (삼키기 어려움)", value=bool(p.get("crush")),
+                        key=f"pc_{key}", **kw)
+    cur = [a for a in p.get("avoid", []) if a in AVOID_OPTIONS]
+    extra_cur = [a for a in p.get("avoid", []) if a not in AVOID_OPTIONS]
+    avoid = st.multiselect("먹기 힘든 성분·약효군 (알레르기, 부작용 경험 등)", AVOID_OPTIONS,
+                           default=cur, format_func=avoid_label, key=f"pa_{key}",
+                           placeholder="한글이나 영문으로 검색 (예: 아스피린, 소염진통제)", **kw)
+    extra = st.text_input("목록에 없는 성분 직접 입력 (쉼표로 구분)", value=", ".join(extra_cur),
+                          key=f"px_{key}", **kw)
+    memo = st.text_area("메모", value=p.get("memo", ""), placeholder="예: 페니실린 알레르기, 신장 기능 저하",
+                        key=f"pm_{key}", **kw)
+    return name, y, m, d, preg, crush, avoid, extra, memo
+
+
 def profile_form(p=None, key="new"):
-    """프로필 입력 폼. 저장하면 id 반환"""
+    """새 프로필 입력 폼 (저장 버튼). 저장하면 id 반환"""
     p = p or {}
     with st.form(f"profile_{key}"):
-        name = st.text_input("이름(별칭)", value=p.get("name", ""), placeholder="예: 나, 어머니")
-        bd = date.fromisoformat(p["birthdate"]) if p.get("birthdate") else None
-        # 달력 위젯은 연도를 10년씩만 보여줘서 어르신 생년을 고르기 어려움 → 연·월·일을 각각 고름
-        # (연도 칸에 '1945'처럼 숫자를 입력하면 바로 찾아짐)
-        st.markdown("**생년월일**", help="영유아는 개월 수까지 정확히 계산돼요. "
-                    "연도 칸을 누르고 '1945'처럼 숫자를 입력하면 바로 찾을 수 있어요.")
-        years = list(range(today_kst().year, 1899, -1))
-        cy, cm, cd = st.columns([2, 1, 1])
-        y = cy.selectbox("연도", years, index=years.index(bd.year) if bd else None,
-                         format_func=lambda v: f"{v}년", placeholder="연도 선택", key=f"by_{key}")
-        m = cm.selectbox("월", list(range(1, 13)), index=bd.month - 1 if bd else None,
-                         format_func=lambda v: f"{v}월", placeholder="월", key=f"bm_{key}")
-        d = cd.selectbox("일", list(range(1, 32)), index=bd.day - 1 if bd else None,
-                         format_func=lambda v: f"{v}일", placeholder="일", key=f"bd_{key}")
-        preg = st.checkbox("임신 중이거나 임신 가능성이 있음", value=bool(p.get("pregnant")))
-        crush = st.checkbox("알약을 쪼개거나 갈아서 먹음 (삼키기 어려움)", value=bool(p.get("crush")))
-        cur = [a for a in p.get("avoid", []) if a in AVOID_OPTIONS]
-        extra_cur = [a for a in p.get("avoid", []) if a not in AVOID_OPTIONS]
-        avoid = st.multiselect("먹기 힘든 성분·약효군 (알레르기, 부작용 경험 등)", AVOID_OPTIONS,
-                               default=cur, format_func=avoid_label,
-                               placeholder="한글이나 영문으로 검색 (예: 아스피린, 소염진통제)")
-        extra = st.text_input("목록에 없는 성분 직접 입력 (쉼표로 구분)", value=", ".join(extra_cur))
-        memo = st.text_area("메모", value=p.get("memo", ""), placeholder="예: 페니실린 알레르기, 신장 기능 저하")
+        name, y, m, d, preg, crush, avoid, extra, memo = profile_fields(p, key)
         if st.form_submit_button("💾 저장", type="primary"):
-            if not name.strip():
-                st.error("이름을 입력해 주세요.")
+            err, birth, avoid_all = check_profile(name, y, m, d, extra, avoid)
+            if err:
+                st.error(err)
                 return None
-            if not (y and m and d):
-                st.error("생년월일(연도·월·일)을 모두 골라 주세요. 연령·노인 주의 확인에 필요해요.")
-                return None
-            try:
-                birth = date(y, m, d)
-            except ValueError:
-                st.error(f"{y}년 {m}월에는 {d}일이 없어요. 날짜를 다시 확인해 주세요.")
-                return None
-            if birth > today_kst():
-                st.error("생년월일이 오늘보다 뒤예요. 날짜를 다시 확인해 주세요.")
-                return None
-            typed = [data.normalize(x) for x in extra.split(",") if x.strip()]
-            return store.save_profile(p.get("id"), name.strip(), birth, preg, crush,
-                                      list(dict.fromkeys(avoid + typed)), memo)
+            return store.save_profile(p.get("id"), name.strip(), birth, preg, crush, avoid_all, memo)
     return None
 
+
+def autosave_profile(p, key):
+    """프로필 수정 화면: 칸을 바꾸면 바로 저장 (입력이 잘못됐으면 저장하지 않고 안내)"""
+    ss = st.session_state
+    err, birth, avoid_all = check_profile(ss[f"pn_{key}"], ss[f"by_{key}"], ss[f"bm_{key}"], ss[f"bd_{key}"],
+                                          ss[f"px_{key}"], ss[f"pa_{key}"])
+    ss[f"perr_{key}"] = err
+    if err:
+        return
+    store.save_profile(p["id"], ss[f"pn_{key}"].strip(), birth, ss[f"pp_{key}"], ss[f"pc_{key}"],
+                       avoid_all, ss[f"pm_{key}"])
+    st.toast("✅ 저장했어요")
+
+
+def profile_editor(p):
+    key = f"edit_{p['id']}"
+    st.caption("바꾸는 즉시 자동으로 저장돼요. (글자 입력칸은 다른 곳을 누르거나 Enter를 치면 저장돼요)")
+    profile_fields(p, key, on_change=autosave_profile, args=(p, key))
+    if st.session_state.get(f"perr_{key}"):
+        st.error(st.session_state[f"perr_{key}"])
 
 profiles = store.profiles()
 if not profiles:
@@ -240,11 +350,12 @@ with st.sidebar:
         st.caption(f"로그인: {st.session_state.sb_email}")
         if st.button("로그아웃"):
             try:
-                st.session_state.sb.auth.sign_out()
+                st.session_state.sb.auth.sign_out({"scope": "local"})   # 이 기기만 로그아웃
             except Exception:
                 pass
             for k in list(st.session_state):
                 del st.session_state[k]
+            st.session_state.no_auto = True      # 다음 화면에서 쿠키를 지우고 자동 로그인하지 않음
             st.rerun()
     st.divider()
     st.markdown("**아이콘 안내**")
@@ -571,9 +682,7 @@ with tab3:
 # ─────────────────────────────────────────
 with tab4:
     st.subheader(f"{prof.name}님 프로필")
-    if profile_form(prow, key=f"edit_{pid}") is not None:
-        st.success("저장했어요.")
-        st.rerun()
+    profile_editor(prow)
     with st.expander("➕ 새 프로필 추가 (가족 등)"):
         if (nid := profile_form(key="add")) is not None:
             st.session_state.pid = nid
