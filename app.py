@@ -355,9 +355,9 @@ with tab1:
         cached = [renorm(r) for r in store.cache_search(kw)]  # 이전에 식약처에서 받아 둔 약 (공동 DB)
         options = [("cache", r["key"]) for r in cached] + [("dur", c) for c in found["제품코드"]]
         api_res = []
-        # 식약처 조회: DUR 목록에 없으면 자동으로, 있으면 '식약처에서 더 찾기'를 눌렀을 때만 (호출 한도 절약)
+        # 식약처 조회는 '식약처에서 더 찾기'를 눌렀을 때만 (오타로 바로 넘어가지 않게, 호출 한도 절약)
         more = st.session_state.get("more_q") == kw
-        if (found.empty or more) and API_ON:
+        if more and API_ON:
             if st.session_state.get("api_q") != kw:
                 try:
                     with st.spinner("식약처 허가정보에서 찾는 중..."):
@@ -389,15 +389,19 @@ with tab1:
             except (KeyError, IndexError):       # 이전 화면의 선택값이 남아 있을 때
                 return str(o[1])
 
+        def more_button():
+            if API_ON and not more:
+                if st.button("🔍 찾는 약이 목록에 없나요? 식약처에서 더 찾기", key="more_btn"):
+                    st.session_state.more_q = kw
+                    st.rerun()
+
         if not options:
             st.info("찾는 약이 없어요. 이름을 다시 확인하거나(예: '정', '캡슐' 빼고 검색), 영양제·건강기능식품이면 "
                     "아래 '영양제 등 추가'를 이용하세요." +
                     ("" if API_ON else " (식약처 API 키를 설정하면 DUR 목록 밖의 약도 찾아요.)"))
+            more_button()                                    # 이름이 맞으면 그때 식약처에서 찾기
         else:
-            if not found.empty and API_ON and not more:
-                if st.button("🔍 찾는 약이 목록에 없나요? 식약처에서 더 찾기", key="more_btn"):
-                    st.session_state.more_q = kw
-                    st.rerun()
+            more_button()
             sel = st.selectbox(f"검색 결과 {len(options)}건", options, format_func=label)
             if sel[0] == "api":
                 r = api_res[sel[1]]
