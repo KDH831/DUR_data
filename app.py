@@ -119,7 +119,7 @@ def finish_login(client, email, remember):
 
 
 def password_recovery():
-    """비밀번호 재설정: 메일 링크(?token_hash=…&type=recovery) 또는 메일의 6자리 코드로 본인 확인 →
+    """비밀번호 재설정: 메일 링크(?token_hash=…&type=recovery) 또는 메일의 코드로 본인 확인 →
     새 비밀번호 입력. Supabase 'Reset password' 메일 템플릿 수정이 필요함 (DEPLOY.md 참고)"""
     from supabase import create_client
     qp = st.query_params
@@ -170,12 +170,12 @@ def forgot_password_box():
                     st.error("메일을 너무 자주 요청했어요. 잠시 후 다시 시도해 주세요.")
                     return
             # 가입 여부를 알려주지 않음 (다른 사람이 이메일 가입 여부를 알아내지 못하게)
-            st.success("가입된 이메일이라면 재설정 메일을 보냈어요. 메일의 링크를 누르거나, 아래에 6자리 코드를 입력하세요.")
-        code = st.text_input("메일로 받은 6자리 코드", key="fp_code", max_chars=6)
+            st.success("가입된 이메일이라면 재설정 메일을 보냈어요. 메일의 링크를 누르거나, 아래에 메일의 코드를 입력하세요.")
+        code = st.text_input("메일로 받은 코드 (숫자)", key="fp_code", max_chars=10)
         if st.button("코드 확인", key="fp_verify"):
             client = create_client(SB_URL, SB_ANON)
             try:
-                client.auth.verify_otp({"email": email.strip(), "token": code.strip(), "type": "recovery"})
+                client.auth.verify_otp({"email": email.strip(), "token": code.replace(" ", "").strip(), "type": "recovery"})
                 st.session_state.rec_client = client
                 st.rerun()
             except Exception:
