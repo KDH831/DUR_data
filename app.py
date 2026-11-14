@@ -165,8 +165,18 @@ def profile_form(p=None, key="new"):
     with st.form(f"profile_{key}"):
         name = st.text_input("이름(별칭)", value=p.get("name", ""), placeholder="예: 나, 어머니")
         bd = date.fromisoformat(p["birthdate"]) if p.get("birthdate") else None
-        birth = st.date_input("생년월일", value=bd, min_value=date(1900, 1, 1), max_value=today_kst(),
-                              format="YYYY-MM-DD", help="영유아는 개월 수까지 정확히 계산돼요.")
+        # 달력 위젯은 연도를 10년씩만 보여줘서 어르신 생년을 고르기 어려움 → 연·월·일을 각각 고름
+        # (연도 칸에 '1945'처럼 숫자를 입력하면 바로 찾아짐)
+        st.markdown("**생년월일**", help="영유아는 개월 수까지 정확히 계산돼요. "
+                    "연도 칸을 누르고 '1945'처럼 숫자를 입력하면 바로 찾을 수 있어요.")
+        years = list(range(today_kst().year, 1899, -1))
+        cy, cm, cd = st.columns([2, 1, 1])
+        y = cy.selectbox("연도", years, index=years.index(bd.year) if bd else None,
+                         format_func=lambda v: f"{v}년", placeholder="연도 선택", key=f"by_{key}")
+        m = cm.selectbox("월", list(range(1, 13)), index=bd.month - 1 if bd else None,
+                         format_func=lambda v: f"{v}월", placeholder="월", key=f"bm_{key}")
+        d = cd.selectbox("일", list(range(1, 32)), index=bd.day - 1 if bd else None,
+                         format_func=lambda v: f"{v}일", placeholder="일", key=f"bd_{key}")
         preg = st.checkbox("임신 중이거나 임신 가능성이 있음", value=bool(p.get("pregnant")))
         crush = st.checkbox("알약을 쪼개거나 갈아서 먹음 (삼키기 어려움)", value=bool(p.get("crush")))
         cur = [a for a in p.get("avoid", []) if a in AVOID_OPTIONS]
@@ -180,8 +190,16 @@ def profile_form(p=None, key="new"):
             if not name.strip():
                 st.error("이름을 입력해 주세요.")
                 return None
-            if not birth:
-                st.error("생년월일을 입력해 주세요. 연령·노인 주의 확인에 필요해요.")
+            if not (y and m and d):
+                st.error("생년월일(연도·월·일)을 모두 골라 주세요. 연령·노인 주의 확인에 필요해요.")
+                return None
+            try:
+                birth = date(y, m, d)
+            except ValueError:
+                st.error(f"{y}년 {m}월에는 {d}일이 없어요. 날짜를 다시 확인해 주세요.")
+                return None
+            if birth > today_kst():
+                st.error("생년월일이 오늘보다 뒤예요. 날짜를 다시 확인해 주세요.")
                 return None
             typed = [data.normalize(x) for x in extra.split(",") if x.strip()]
             return store.save_profile(p.get("id"), name.strip(), birth, preg, crush,
