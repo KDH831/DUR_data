@@ -198,7 +198,7 @@ def login_gate(cm):
     with t_in, st.form("login"):
         email = st.text_input("이메일")
         pw = st.text_input("비밀번호", type="password")
-        remember = st.checkbox("로그인 상태 유지", value=True,
+        remember = st.checkbox("로그인 상태 유지", value=False,
                                help=f"{REMEMBER_DAYS}일 동안 다시 로그인하지 않아도 돼요. 여러 사람이 쓰는 컴퓨터에서는 해제하세요.")
         if st.form_submit_button("로그인", type="primary"):
             client = create_client(SB_URL, SB_ANON)
@@ -229,7 +229,7 @@ def login_gate(cm):
                     res = client.auth.sign_up({"email": email.strip(), "password": pw})
                     if res.session:
                         st.session_state.sb, st.session_state.sb_email = client, res.user.email
-                        st.session_state.remember = True
+                        st.session_state.remember = False   # 공용 PC 대비: 가입 직후에도 기본은 유지 안 함
                         st.session_state.pop("no_auto", None)
                         st.rerun()
                     st.success("가입 확인 메일을 보냈어요. 메일의 링크를 누른 뒤 로그인해 주세요.")

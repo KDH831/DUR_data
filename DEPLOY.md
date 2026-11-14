@@ -47,3 +47,13 @@
 ## 회원 탈퇴
 '👤 프로필' 탭 맨 아래. 비밀번호 확인 후 `SUPABASE_SERVICE_KEY`로 계정을 삭제하며,
 profiles·meds·intake는 DB 규칙(on delete cascade)으로 함께 삭제됩니다.
+
+## GitHub Actions (자동 작업 2가지)
+| 파일 | 하는 일 |
+|---|---|
+| `.github/workflows/tests.yml` | 코드를 올릴 때마다 `tests/` 자동 실행 → 저장소 **Actions** 탭에 ✅/❌ |
+| `.github/workflows/keepalive.yml` | 3일마다 Supabase에 가벼운 조회 → 무료 프로젝트 일시 정지 방지 |
+
+keep-alive 설정: 저장소 **Settings → Secrets and variables → Actions → New repository secret**에서
+`SUPABASE_URL`, `SUPABASE_ANON_KEY` 두 개 등록 → **Actions → Supabase keep-alive → Run workflow**로 한 번 실행해 ✅ 확인.
+(GitHub는 60일 동안 저장소 활동이 없으면 예약 작업을 멈추고 메일로 알려 줍니다. 메일이 오면 버튼 한 번으로 다시 켜면 됩니다.)
