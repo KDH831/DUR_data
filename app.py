@@ -1,3 +1,4 @@
+import re
 from datetime import date, timedelta
 
 import pandas as pd
@@ -354,7 +355,9 @@ with tab1:
         cached = [renorm(r) for r in store.cache_search(kw)]  # 이전에 식약처에서 받아 둔 약 (공동 DB)
         options = [("cache", r["key"]) for r in cached] + [("dur", c) for c in found["제품코드"]]
         api_res = []
-        if not options and API_ON:                           # DUR·공동 DB에 없으면 식약처에 자동 조회
+        # 식약처 조회: DUR 목록에 없으면 자동으로, 있으면 '식약처에서 더 찾기'를 눌렀을 때만 (호출 한도 절약)
+        more = st.session_state.get("more_q") == kw
+        if (found.empty or more) and API_ON:
             if st.session_state.get("api_q") != kw:
                 try:
                     with st.spinner("식약처 허가정보에서 찾는 중..."):
@@ -363,9 +366,16 @@ with tab1:
                     st.session_state.api_res = []
                     st.error(f"식약처 조회에 실패했어요. 잠시 후 다시 시도해 주세요. ({e})")
                 st.session_state.api_q = kw
+            have = {r["key"] for r in cached}                 # 공동 DB에 이미 있는 제품은 중복으로 보이지 않게
+            same = lambda n: re.sub(r"\(.*?\)|\[.*?\]|\s", "", n).replace("밀리그람", "밀리그램").lower()
+            dur_names = {same(short_name(n)) for n in found["제품명"]}   # DUR 목록에 있는 같은 제품도 제외
             api_res = [r for r in st.session_state.get("api_res", [])
-                       if data.parse_ingredients(r["ingredients_raw"])]
-            options = [("api", i) for i in range(len(api_res))]
+                       if data.parse_ingredients(r["ingredients_raw"])
+                       and f"api-{r['item_seq'] or norm_drug_name(r['name'])}" not in have
+                       and same(r["name"]) not in dur_names]
+            options += [("api", i) for i in range(len(api_res))]
+            if more and not api_res and st.session_state.get("api_q") == kw:
+                st.caption("식약처에서 추가로 찾은 약이 없어요.")
         cmap = {r["key"]: r for r in cached}
         fmap = found.set_index("제품코드")
 
@@ -384,6 +394,10 @@ with tab1:
                     "아래 '영양제 등 추가'를 이용하세요." +
                     ("" if API_ON else " (식약처 API 키를 설정하면 DUR 목록 밖의 약도 찾아요.)"))
         else:
+            if not found.empty and API_ON and not more:
+                if st.button("🔍 찾는 약이 목록에 없나요? 식약처에서 더 찾기", key="more_btn"):
+                    st.session_state.more_q = kw
+                    st.rerun()
             sel = st.selectbox(f"검색 결과 {len(options)}건", options, format_func=label)
             if sel[0] == "api":
                 r = api_res[sel[1]]
