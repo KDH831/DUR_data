@@ -168,3 +168,17 @@ def test_search_returns_ended_items_only_when_asked(monkeypatch):
     assert mfds_api.search("옛약") == []
     r = mfds_api.search("옛약", include_inactive=True)[0]
     assert r["active"] is False and r["cancel_name"] == "취하" and r["cancel_date"] == "20240104"
+
+
+def test_item_name_whitespace_cleaned(monkeypatch):
+    """실제 응답에 줄바꿈이 섞인 제품명이 있음 (2026-11-15 라니티딘 조회)"""
+    import io, json
+    items = [{"ITEM_NAME": "휴란정150mg\n\n(라니티딘염산염)", "ITEM_SEQ": "1", "ITEM_INGR_NAME": "Ranitidine Hydrochloride"},
+             {"ITEM_NAME": "라니돈정75밀리그램(라니티딘염산염)\r\n", "ITEM_SEQ": "2", "ITEM_INGR_NAME": "Ranitidine Hydrochloride"}]
+
+    class R(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    monkeypatch.setenv("MFDS_API_KEY", "test")
+    monkeypatch.setattr(mfds_api.urllib.request, "urlopen", lambda *a, **k: R(json.dumps({"body": {"items": items}}).encode()))
+    assert [r["name"] for r in mfds_api.search("라니")] == ["휴란정150mg (라니티딘염산염)", "라니돈정75밀리그램(라니티딘염산염)"]
