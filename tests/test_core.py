@@ -238,3 +238,28 @@ def test_form_words_stripped_before_mineral_check():
     """제형 표현이 붙은 무기질 성분도 무기질로 인식 (갑상선호르몬+칼슘 주의를 놓치지 않게)"""
     assert norm_en("calcium carbonate granules") == "calcium carbonate"
     assert in_class(norm_en("Calcium Carbonate Granules"), "CATION")
+
+
+# ── 나이 경계일 (달력 기준, 화면 표시와 같아야 함) ─────────────────
+def test_age_boundaries_calendar():
+    from core import age_matches, is_elderly
+    under2 = {"특정연령": "2", "특정연령단위": "세 (3)", "연령처리조건": "미만 (1)"}
+    upto2 = {"특정연령": "2", "특정연령단위": "세 (3)", "연령처리조건": "이하 (2)"}
+    under6m = {"특정연령": "6", "특정연령단위": "개월 (2)", "연령처리조건": "미만 (1)"}
+    b = date(2024, 11, 15)
+    assert age_matches(under2, b, date(2026, 11, 14))          # 생일 전날: 아직 2세 미만
+    assert not age_matches(under2, b, date(2026, 11, 15))      # 2번째 생일 당일: 만 2세
+    assert age_matches(upto2, b, date(2027, 11, 14))           # 2세 이하 = 만 3세 전까지
+    assert not age_matches(upto2, b, date(2027, 11, 15))
+    assert age_matches(under6m, date(2026, 2, 28), date(2026, 8, 27))
+    assert not age_matches(under6m, date(2026, 2, 28), date(2026, 8, 28))
+    assert not is_elderly(date(1961, 11, 16), date(2026, 11, 15))
+    assert is_elderly(date(1961, 11, 15), date(2026, 11, 15))  # 65번째 생일 당일
+    assert Profile(birthdate=date(1961, 11, 15)).age_text(date(2026, 11, 15)) == "만 65세"
+
+
+def test_elderly_check_on_65th_birthday(data):
+    m = find(data, "솔리페나신")
+    prof = Profile(birthdate=date(1961, 11, 15))
+    assert has([m], data, "노인주의", prof)
+    assert not has([m], data, "노인주의", Profile(birthdate=date(1961, 11, 16)))
