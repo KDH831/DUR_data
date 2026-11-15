@@ -7,6 +7,7 @@
 """
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 
@@ -50,8 +51,13 @@ def is_active(it):
     return not cdate and status in ("", "정상")
 
 
+def edi_codes(it):
+    """보험 EDI 코드 목록 (= DUR 목록의 제품코드). 용량 여러 개를 묶은 허가 등은 비어 있음(null)"""
+    return re.findall(r"\d{9}", str(it.get("EDI_CODE") or ""))
+
+
 def search(name, rows=20, timeout=10, include_inactive=False):
-    """반환: [{'name', 'item_seq', 'ingredients_raw', 'company', 'active'}]. 키가 없으면 [], 통신 실패 시 예외
+    """반환: [{'name', 'item_seq', 'ingredients_raw', 'company', 'active', 'edi_codes'}]. 키가 없으면 [], 통신 실패 시 예외
     기본값은 허가 취소·취하 품목을 빼고 돌려줌"""
     key = get_key()
     if not key:
@@ -66,5 +72,6 @@ def search(name, rows=20, timeout=10, include_inactive=False):
         active = is_active(it)
         if nm and raw and (active or include_inactive):
             out.append({"name": nm, "item_seq": str(it.get("ITEM_SEQ") or it.get("PRDLST_STDR_CODE") or ""),
-                        "ingredients_raw": raw, "company": it.get("ENTP_NAME") or "", "active": active})
+                        "ingredients_raw": raw, "company": (it.get("ENTP_NAME") or "").strip(), "active": active,
+                        "edi_codes": edi_codes(it)})
     return out

@@ -613,6 +613,43 @@ def short_name(name):
     return name.split("_(")[0]
 
 
+def same_name(n):
+    """'조코정20밀리그램(심바스타틴)_(20mg/1정)'과 식약처 '조코정20밀리그램(심바스타틴)'을 같은 제품으로 보기 위한 비교용 이름"""
+    return re.sub(r"\(.*?\)|\[.*?\]|\s", "", short_name(n)).replace("밀리그람", "밀리그램").lower()
+
+
+class DurIndex:
+    """식약처 검색 결과 → DUR 제품코드 연결용 색인
+
+    식약처는 '허가 1건'(리벨서스정 = 3·7·14mg 묶음), DUR은 '보험 제품'(용량·포장별) 단위라서
+    한 식약처 품목이 DUR 제품 여러 개에 해당할 수 있음.
+    성분코드가 없는 식약처 항목은 DUR 병용금기(코드 쌍 기준)를 놓칠 수 있으므로 가능하면 DUR 항목으로 연결함.
+    """
+
+    def __init__(self, drugs):
+        self.codes = set(drugs["제품코드"])
+        groups, ingr = defaultdict(list), defaultdict(set)
+        for code, name, icode in zip(drugs["제품코드"], drugs["제품명"], drugs["성분코드"]):
+            k = same_name(name)
+            if code not in groups[k]:
+                groups[k].append(code)
+            ingr[k].add(icode)
+        self.groups, self.ingr = dict(groups), dict(ingr)
+
+    def match(self, item):
+        """식약처 품목(mfds_api.search 결과 1개) → 연결할 DUR 제품코드 목록. []이면 식약처 항목 그대로 보여줌
+        1) EDI 코드가 DUR 제품코드와 같으면 그 제품 (이름 표기와 무관하게 정확)
+        2) 비교용 이름이 같은 DUR 제품의 성분코드가 1개면 그 제품 (같은 약의 업체·포장 차이 → 첫 코드)
+        3) 성분코드가 여러 개면(용량·포장별로 나뉜 약) 그 제품 전부 → 사용자가 실제 용량을 고름"""
+        codes = [c for c in item.get("edi_codes") or [] if c in self.codes]
+        if codes:
+            return codes
+        k = same_name(item["name"])
+        if k not in self.groups:
+            return []
+        return self.groups[k][:1] if len(self.ingr[k]) == 1 else list(self.groups[k])
+
+
 DOSAGE_FORMS = ["필름코팅정", "서방정", "장용정", "연질캡슐", "경질캡슐", "캡슐", "츄어블정", "발포정",
                 "정", "시럽", "현탁액", "액", "산", "과립", "크림", "연고", "패치"]
 

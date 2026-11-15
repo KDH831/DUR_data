@@ -1,12 +1,10 @@
-import re
-from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
 
 import mfds_api
-from core import (DURData, Med, Profile, analyze_all, med_from_cache, norm_drug_name, note_med,
+from core import (DURData, DurIndex, Med, Profile, analyze_all, med_from_cache, norm_drug_name, note_med,
                   pair_checks, short_name, single_checks, today_kst)
 from rules import CLASSES
 from store import LocalStore, SupabaseStore
@@ -494,20 +492,10 @@ def enrich_full_ingredients(code, pname):
 
 
 
-def same_name(n):
-    """'조코정20밀리그램(심바스타틴)_(20mg/1정)'과 식약처 '조코정20밀리그램(심바스타틴)'을 같은 제품으로 보기 위한 비교용 이름"""
-    return re.sub(r"\(.*?\)|\[.*?\]|\s", "", short_name(n)).replace("밀리그람", "밀리그램").lower()
-
-
 @st.cache_resource
-def dur_by_name():
-    """비교용 이름 → DUR 제품코드. 같은 이름에 성분코드가 여러 개면(주사제 포장별 등) 연결하지 않음"""
-    codes, ingr = {}, defaultdict(set)
-    for code, name, icode in zip(data.drugs["제품코드"], data.drugs["제품명"], data.drugs["성분코드"]):
-        k = same_name(name)
-        codes.setdefault(k, code)
-        ingr[k].add(icode)
-    return {k: c for k, c in codes.items() if len(ingr[k]) == 1}
+def dur_index():
+    """식약처 품목 → DUR 제품코드 연결 색인 (core.DurIndex)"""
+    return DurIndex(data.drugs)
 
 
 my = []
@@ -575,14 +563,15 @@ with tab1:
         api_res = [r for r in (st.session_state.get("api_res", []) if API_ON else [])
                    if data.parse_ingredients(r["ingredients_raw"])]
 
-        by_name = dur_by_name()
+        idx = dur_index()
         api_for_code, options = {}, []
         for i, r in enumerate(api_res):
-            code = by_name.get(same_name(r["name"]))
-            if code and code not in api_for_code:            # DUR 목록에 있는 제품 → 코드로 검사
-                api_for_code[code] = i
-                options.append(("dur", code))
-            elif not code:
+            codes = idx.match(r)          # DUR 목록에 있는 제품 → 코드로 검사 (용량별로 나뉜 약은 용량별 항목으로)
+            for code in codes:
+                if code not in api_for_code:
+                    api_for_code[code] = i
+                    options.append(("dur", code))
+            if not codes:
                 options.append(("api", i))
 
         # 식약처 결과 뒤에 DUR 목록·공동 DB 결과도 붙임
