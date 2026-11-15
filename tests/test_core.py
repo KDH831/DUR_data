@@ -3,7 +3,7 @@
 from datetime import date
 
 import mfds_api
-from core import DurIndex, Med, Profile, analyze_all, in_class, norm_en, pair_checks, today_kst
+from core import DurIndex, Med, detail_queries, pick_mfds_item, Profile, analyze_all, in_class, norm_en, pair_checks, today_kst
 
 ELDER = Profile(birthdate=date(1950, 3, 1))
 TODAY = date(2026, 11, 15)
@@ -182,3 +182,25 @@ def test_item_name_whitespace_cleaned(monkeypatch):
     monkeypatch.setenv("MFDS_API_KEY", "test")
     monkeypatch.setattr(mfds_api.urllib.request, "urlopen", lambda *a, **k: R(json.dumps({"body": {"items": items}}).encode()))
     assert [r["name"] for r in mfds_api.search("라니")] == ["휴란정150mg (라니티딘염산염)", "라니돈정75밀리그램(라니티딘염산염)"]
+
+
+# ── '내 약' 상세 정보 링크 ─────────────────────────────────────
+def test_detail_queries():
+    assert detail_queries("광동아스피린장용정100mg_(0.1g/1정)") == ["광동아스피린장용정100mg", "광동아스피린장용정"]
+    assert detail_queries("리벨서스정(세마글루티드)_(3mg/1정)") == ["리벨서스정"]
+    assert detail_queries("23가폐렴구균백신") == ["23가폐렴구균백신"]
+
+
+def test_pick_mfds_item_for_my_meds(data):
+    idx = DurIndex(data.drugs)
+    kd = {"name": "광동아스피린장용정100mg", "item_seq": "201702015", "edi_codes": ["641806290"], "active": True}
+    y2 = {"name": "와이투아스피린장용정100밀리그램(아스피린)", "item_seq": "202105531", "edi_codes": [], "active": False}
+    ryb = {"name": "리벨서스정(세마글루티드)", "item_seq": "202201785", "edi_codes": [], "active": True}
+    items = [kd, y2, ryb]
+    assert pick_mfds_item("641806290", items, idx) is kd                 # DUR 약 → EDI 코드로
+    assert pick_mfds_item("072400130", items, idx) is y2                 # DUR에만 남은 만료 약 → 만료 품목
+    assert pick_mfds_item("654400610", items, idx) is ryb                # 용량별 DUR 약 → 묶음 허가
+    assert pick_mfds_item("api-202105531", items, idx) is y2             # 식약처에서 찾은 약 → 품목기준코드
+    assert pick_mfds_item("api-999", items, idx) is None
+    old = dict(kd, item_seq="1", active=False)                          # 같은 제품에 살아 있는 허가가 있으면 그쪽
+    assert pick_mfds_item("641806290", [old, kd], idx) is kd

@@ -129,3 +129,37 @@ def test_password_reset_code_and_link(online):
     assert good.title[0].value.startswith("🔑")
     bad = online({"type": "recovery", "token_hash": "BAD"})
     assert any("만료" in e.value for e in bad.error)
+
+
+def test_my_med_detail_link(online):
+    """'내 약' ℹ️: 누른 약만 식약처 상세 링크 + 허가가 끝났으면 경고, 영양제는 버튼 없음"""
+    fake_supabase.USERS["c@x.com"] = "password3"
+    at = online()
+    login(at, "c@x.com", "password3")
+    make_profile(at, "아버지", 1955, 5, 5)
+    for kw in ("아스피린", "옛날약"):
+        search(at, kw)
+        btn(at, "➕ 내 약에 추가").click().run()
+        ok(at)
+    next(t for t in at.text_input if t.key == "note_name").input("오메가3")
+    next(b for b in at.button if b.key == "note_btn").click().run()
+    ok(at)
+
+    meds = {m["product_key"]: m["id"] for m in fake_supabase.DB["meds"] if m["user_id"] == "c@x.com"}
+    assert not any(b.key == f"info_{meds['note:오메가3']}" for b in at.button)    # 영양제는 링크 없음
+    assert not any("의약품안전나라에서" in m.value for m in at.markdown)          # 누르기 전엔 조회 안 함
+
+    next(b for b in at.button if b.key == f"info_{meds['api-1']}").click().run()
+    ok(at)
+    assert any("itemSeq=1)" in m.value for m in at.markdown)
+    assert not any("허가" in e.value for e in [*at.error, *at.warning])          # 정상 약
+
+    next(b for b in at.button if b.key == f"info_{meds['api-4']}").click().run()   # 취소된 약
+    ok(at)
+    assert any("itemSeq=4)" in m.value for m in at.markdown)
+    assert any("허가 취소" in e.value and "2019-01-01" in e.value for e in at.error)
+    assert not any("itemSeq=1)" in m.value for m in at.markdown)                  # 한 번에 하나만 펼침
+
+    next(b for b in at.button if b.key == f"info_{meds['api-4']}").click().run()   # 다시 누르면 닫힘
+    ok(at)
+    assert not any("의약품안전나라에서" in m.value for m in at.markdown)
