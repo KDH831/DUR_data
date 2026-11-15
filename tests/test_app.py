@@ -216,3 +216,32 @@ def test_permit_ended_display(online):
     assert "itemSeq=4" in box and "의사나 약사와 상의" in box
     assert not any("만료약캡슐" in w.value for w in [*at.warning, *at.error])  # 만료 약은 안전성 탭에 없음
     assert any(m.label == "🟡 주의" and m.value == "1건" for m in at.metric)
+
+
+def test_med_visible_and_deletable_without_service_key(online):
+    """서버 키가 없어 공동 캐시에 못 넣어도 약이 목록에 보이고 지울 수 있어야 함"""
+    import streamlit as st
+    st.cache_resource.clear()            # 앞 테스트에서 저장된 admin_client(서버 키 있음)를 지움
+    try:
+        _no_service_key_flow(online)
+    finally:
+        st.cache_resource.clear()        # 뒤 테스트에 '서버 키 없음' 상태가 남지 않게
+
+
+def _no_service_key_flow(online):
+    fake_supabase.USERS["a@x.com"] = "password1"
+    at = online()
+    del at.secrets["SUPABASE_SERVICE_KEY"]
+    at.run()
+    login(at, "a@x.com", "password1")
+    make_profile(at, "나", 1980, 1, 1)
+    search(at, "만료약")
+    btn(at, "➕ 내 약에 추가").click().run()
+    ok(at)
+    assert any("먹는 약 (1개)" in s.value for s in at.subheader)
+    assert any("만료약캡슐" in m.value for m in at.markdown)
+    del_btn = next(b for b in at.button if b.label == "삭제" and b.key and b.key.startswith("del_"))
+    del_btn.click().run()
+    ok(at)
+    assert any("먹는 약 (0개)" in s.value for s in at.subheader)
+    assert fake_supabase.DB["meds"] == []
