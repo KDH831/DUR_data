@@ -3,7 +3,7 @@
 from datetime import date
 
 import mfds_api
-from core import DurIndex, Med, detail_queries, pick_mfds_item, Profile, analyze_all, in_class, norm_en, pair_checks, today_kst
+from core import DurIndex, Med, detail_queries, pick_mfds_item, same_name, strip_brackets, Profile, analyze_all, in_class, norm_en, pair_checks, today_kst
 
 ELDER = Profile(birthdate=date(1950, 3, 1))
 TODAY = date(2026, 11, 15)
@@ -204,3 +204,12 @@ def test_pick_mfds_item_for_my_meds(data):
     assert pick_mfds_item("api-999", items, idx) is None
     old = dict(kd, item_seq="1", active=False)                          # 같은 제품에 살아 있는 허가가 있으면 그쪽
     assert pick_mfds_item("641806290", [old, kd], idx) is kd
+
+
+def test_nested_brackets():
+    """괄호 안에 괄호가 있는 이름 (실제: 스틴투엑스정, DUR 목록에도 146개)"""
+    assert strip_brackets("스틴투엑스정(애엽95%에탄올연조엑스(20→1))") == "스틴투엑스정"
+    assert detail_queries("스틴투엑스정(애엽95%에탄올연조엑스(20→1))") == ["스틴투엑스정"]
+    assert same_name("넥사바정200밀리그램(소라페닙토실레이트(미분화))_(0.274g/1정)") == \
+        same_name("넥사바정200밀리그램(소라페닙토실레이트)")
+    assert strip_brackets("짝안맞음(괄호") == "짝안맞음괄호"

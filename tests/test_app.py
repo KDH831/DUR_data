@@ -156,8 +156,10 @@ def test_my_med_detail_link(online):
     ok_line = line(at, "아스피린장용정100밀리그램")
     assert "[ⓘ](https://nedrug.mfds.go.kr/pbp/CCBBB01/getItemDetail?itemSeq=1 " in ok_line
     assert "⚠️" not in ok_line                                               # 정상 약
-    old = line(at, "옛날약정")
+    old = line(at, "옛날약정(옛성분(20→1))")                                  # 괄호가 겹친 이름
     assert "itemSeq=4 " in old and ":red[⚠️ 허가 취소 (2019-01-01)" in old and "의사나 약사" in old
+    assert "✅" not in old                                                    # 허가 끝난 약에 ✅ 안 붙음
+    assert not line(at, "아스피린장용정100밀리그램").startswith("⚠️")             # 정상 약엔 ⚠️ 없음
     assert "ⓘ" not in line(at, "오메가3")                                      # 영양제는 링크 없음
     assert not any(b.label == "ℹ️" for b in at.button)                         # 따로 누르는 버튼 없음
 
@@ -182,3 +184,16 @@ def test_my_med_detail_when_mfds_down(online, monkeypatch):
     at.run()
     ok(at)
     assert API_CALLS.count("DOWN") == n                                      # 다시 그려도 재조회 안 함
+
+
+def test_ended_med_badge_without_findings(online):
+    """안전성 검사에 걸린 게 없어도 허가가 끝난 약에는 ✅ 대신 ⚠️ (젊은 성인, 약 1개)"""
+    fake_supabase.USERS["e@x.com"] = "password5"
+    at = online()
+    login(at, "e@x.com", "password5")
+    make_profile(at, "나", 1990, 1, 1)
+    search(at, "옛날약")
+    btn(at, "➕ 내 약에 추가").click().run()
+    ok(at)
+    old = line(at, "옛날약정(옛성분(20→1))")
+    assert old.startswith("⚠️ **") and "✅" not in old

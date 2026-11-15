@@ -30,7 +30,7 @@ FAKE_MFDS = {
         {"ITEM_NAME": "와이투아스피린장용정100밀리그램(아스피린)", "ITEM_SEQ": "202105531", "ITEM_INGR_NAME": "Aspirin",
          "ENTP_NAME": "성이바이오제약주식회사", "CANCEL_NAME": "유효기간만료", "CANCEL_DATE": "20260723", "EDI_CODE": None}],
     "옛날약": [
-        {"ITEM_NAME": "옛날약정", "ITEM_SEQ": "4", "ITEM_INGR_NAME": "Aspirin", "ENTP_NAME": "C제약",
+        {"ITEM_NAME": "옛날약정(옛성분(20→1))", "ITEM_SEQ": "4", "ITEM_INGR_NAME": "Aspirin", "ENTP_NAME": "C제약",
          "CANCEL_NAME": "취소", "CANCEL_DATE": "20190101"}],
     "리벨서스": [  # 실제 응답: 용량 3개를 묶은 허가 1건, EDI_CODE null
         {"ITEM_NAME": "리벨서스정(세마글루티드)", "ITEM_SEQ": "202201785", "ITEM_INGR_NAME": "Semaglutide/Semaglutide/Semaglutide",
