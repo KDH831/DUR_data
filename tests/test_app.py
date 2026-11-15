@@ -63,6 +63,10 @@ def test_signup_isolation_search_and_delete(online):
     ok(a)
     assert sum(m["user_id"] == "a@x.com" for m in fake_supabase.DB["meds"]) == 1
 
+    # 용량별로 나뉜 약: 식약처 묶음 항목 없이 DUR 용량별 항목만 (같은 약 중복 표시 방지)
+    opts = search(a, "리벨서스").options
+    assert len(opts) == 3 and all("mg/1정" in o for o in opts), opts
+
     # DUR 밖 약 → 공동 DB 저장 (서버 권한으로만)
     search(a, "씬지로이드")
     btn(a, "➕ 내 약에 추가").click().run()

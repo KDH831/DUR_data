@@ -3,7 +3,7 @@
 from datetime import date
 
 import mfds_api
-from core import Med, Profile, analyze_all, in_class, norm_en, today_kst
+from core import DurIndex, Med, Profile, analyze_all, in_class, norm_en, pair_checks, today_kst
 
 ELDER = Profile(birthdate=date(1950, 3, 1))
 TODAY = date(2026, 11, 15)
@@ -107,3 +107,39 @@ def test_cancelled_products_filtered():
     assert mfds_api.is_active({"CANCEL_NAME": "정상"})
     assert not mfds_api.is_active({"CANCEL_NAME": "취소", "CANCEL_DATE": "20190101"})
     assert not mfds_api.is_active({"CANCEL_DATE": "20200101"})
+
+
+# ── 식약처 품목 → DUR 연결 (2026-11-15 실제 응답 기준) ─────────────
+def test_edi_code_parsed():
+    assert mfds_api.edi_codes({"EDI_CODE": "641806290"}) == ["641806290"]
+    assert mfds_api.edi_codes({"EDI_CODE": "641806290,641806291"}) == ["641806290", "641806291"]
+    assert mfds_api.edi_codes({"EDI_CODE": None}) == []
+
+
+def test_link_by_edi_even_if_name_differs(data):
+    idx = DurIndex(data.drugs)
+    # 이름 표기가 달라도 EDI 코드로 연결
+    assert idx.match({"name": "광동아스피린장용정100밀리그램", "edi_codes": ["641806290"]}) == ["641806290"]
+    # 실제 응답(이름도 같음)
+    assert idx.match({"name": "광동아스피린장용정100mg", "edi_codes": ["641806290"]}) == ["641806290"]
+
+
+def test_multi_strength_item_links_to_all_strengths(data):
+    """리벨서스: 식약처는 허가 1건(EDI_CODE null), DUR은 3·7·14mg 3개 → 용량별 DUR 항목 3개로 연결"""
+    idx = DurIndex(data.drugs)
+    codes = idx.match({"name": "리벨서스정(세마글루티드)", "edi_codes": []})
+    assert sorted(codes) == ["654400610", "654400620", "654400630"]
+
+
+def test_multi_package_combo_keeps_code_contraindication(data):
+    """그린콜샷에스시럽(포장별 성분코드 2개): DUR 항목으로 연결돼야 라사길린 병용금기(코드 기준)를 잡음"""
+    idx = DurIndex(data.drugs)
+    codes = idx.match({"name": "그린콜샷에스시럽", "edi_codes": []})
+    assert len(codes) == 2
+    rasa = find(data, "라사길린")
+    for c in codes:
+        assert any(f["종류"] == "병용금기" for f in pair_checks(data.med_from_row(data.drugs[data.drugs["제품코드"] == c].iloc[0]), rasa, data))
+
+
+def test_unknown_item_stays_api(data):
+    assert DurIndex(data.drugs).match({"name": "씬지로이드정0.1밀리그램", "edi_codes": []}) == []

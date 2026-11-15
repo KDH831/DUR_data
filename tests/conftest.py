@@ -26,6 +26,9 @@ FAKE_MFDS = {
         {"ITEM_NAME": "아스피린장용정100밀리그램", "ITEM_SEQ": "1", "ITEM_INGR_NAME": "Aspirin", "ENTP_NAME": "A제약"},
         {"ITEM_NAME": "옛날아스피린정", "ITEM_SEQ": "2", "ITEM_INGR_NAME": "Aspirin", "ENTP_NAME": "B제약",
          "CANCEL_NAME": "취소", "CANCEL_DATE": "20190101"}],
+    "리벨서스": [  # 실제 응답: 용량 3개를 묶은 허가 1건, EDI_CODE null
+        {"ITEM_NAME": "리벨서스정(세마글루티드)", "ITEM_SEQ": "202201785", "ITEM_INGR_NAME": "Semaglutide/Semaglutide/Semaglutide",
+         "ENTP_NAME": "노보노디스크제약(주) ", "CANCEL_NAME": "정상", "CANCEL_DATE": None, "EDI_CODE": None}],
     "씬지로이드": [
         {"ITEM_NAME": "씬지로이드정0.1밀리그램", "ITEM_SEQ": "3", "ITEM_INGR_NAME": "레보티록신나트륨수화물", "ENTP_NAME": "부광약품"}],
 }
