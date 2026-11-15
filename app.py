@@ -640,12 +640,19 @@ with tab1:
                 return None if api_res[o[1]].get("active", True) else api_res[o[1]]
             return ended_for_code.get(o[1]) if o[0] == "dur" else None
 
-        options.sort(key=lambda o: ended(o) is not None)     # 허가가 끝난 약은 목록 맨 뒤로
+        def ended_rank(o):
+            """정렬 순서: 정상 0 → 허가 취소 1 → 취하·허가 만료 2 (허가가 끝난 약은 목록 뒤로, 취소가 먼저)"""
+            end = ended(o)
+            return 0 if end is None else (1 if mfds_api.status_info(end)[1] == "error" else 2)
+
+        options.sort(key=ended_rank)
 
         def label(o):
             try:
                 end = ended(o)
-                tag = f"⚠️ [{mfds_api.status_info(end)[0]}]  " if end else ""
+                info_ = mfds_api.status_info(end) if end else None
+                # 취소는 ⛔ ('내 약'·안전성 확인 탭과 같은 표시), 취하·만료는 ⚠️
+                tag = f"{'⛔' if info_[1] == 'error' else '⚠️'} [{info_[0]}]  " if info_ else ""
             except (KeyError, IndexError, TypeError):
                 tag = ""
             return tag + base_label(o)
@@ -672,7 +679,7 @@ with tab1:
                 text = f"**{e_tag}**{f' ({e_date})' if e_date else ''} — {e_msg}"
                 if e_url:
                     text += f" [의약품안전나라에서 자세히 보기]({e_url})"
-                (st.error if e_level == "error" else st.info)(text)     # 취하·만료는 경고가 아닌 안내
+                (st.error if e_level == "error" else st.warning)(text)
             r = None
             if sel[0] == "api":
                 r = api_res[sel[1]]
