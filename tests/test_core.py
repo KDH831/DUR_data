@@ -143,3 +143,28 @@ def test_multi_package_combo_keeps_code_contraindication(data):
 
 def test_unknown_item_stays_api(data):
     assert DurIndex(data.drugs).match({"name": "씬지로이드정0.1밀리그램", "edi_codes": []}) == []
+
+
+def test_permit_status_info():
+    assert mfds_api.status_info({"active": True}) is None
+    tag, level, msg, date, url = mfds_api.status_info(
+        {"active": False, "cancel_name": "유효기간만료", "cancel_date": "20260723", "item_seq": "202105531"})
+    assert level == "warning" and "만료" in tag and date == "2026-07-23" and url.endswith("itemSeq=202105531")
+    assert mfds_api.status_info({"active": False, "cancel_name": "취하", "cancel_date": "20240104"})[1] == "warning"
+    assert mfds_api.status_info({"active": False, "cancel_name": "취소", "cancel_date": ""})[1] == "error"
+    tag, level, *_ = mfds_api.status_info({"active": False, "cancel_name": "새상태", "cancel_date": None})
+    assert "새상태" in tag and level == "warning"                      # 모르는 값도 안내
+
+
+def test_search_returns_ended_items_only_when_asked(monkeypatch):
+    import io, json
+    item = {"ITEM_NAME": "옛약", "ITEM_SEQ": "9", "ITEM_INGR_NAME": "Aspirin", "CANCEL_NAME": "취하", "CANCEL_DATE": "20240104"}
+
+    class R(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    monkeypatch.setenv("MFDS_API_KEY", "test")
+    monkeypatch.setattr(mfds_api.urllib.request, "urlopen", lambda *a, **k: R(json.dumps({"body": {"items": [item]}}).encode()))
+    assert mfds_api.search("옛약") == []
+    r = mfds_api.search("옛약", include_inactive=True)[0]
+    assert r["active"] is False and r["cancel_name"] == "취하" and r["cancel_date"] == "20240104"

@@ -55,13 +55,27 @@ def test_signup_isolation_search_and_delete(online):
     login(a, "a@x.com", "password1")
     make_profile(a, "어머니", 1950, 3, 1)
 
-    # 검색: 취소 품목 제외 + DUR 결과 병합
-    opts = search(a, "아스피린").options
-    assert not any("옛날아스피린" in o for o in opts)
+    # 검색: 허가가 끝난 약은 표시를 붙여 맨 뒤에 + DUR 결과 병합
+    box = search(a, "아스피린")
+    opts = box.options
     assert any("아스트릭스" in o for o in opts)
+    ended = [i for i, o in enumerate(opts) if o.startswith("⚠️")]
+    assert ended and ended == list(range(len(opts) - len(ended), len(opts)))   # 모두 맨 뒤
+    old_ = next(o for o in opts if "옛날아스피린" in o)
+    assert "[허가 취소]" in old_
+    y2 = next(o for o in opts if "와이투아스피린" in o)                        # DUR 목록에만 남은 만료 약
+    assert "[판매 중단·허가 만료]" in y2 and "_(0.1g/1정)" in y2
+    assert not opts[0].startswith("⚠️")                                       # 정상 약 선택 시 허가 경고 없음
+    assert not any("판매 중단" in w.value or "허가" in w.value for w in [*a.warning, *a.error])
+
     btn(a, "➕ 내 약에 추가").click().run()
     ok(a)
     assert sum(m["user_id"] == "a@x.com" for m in fake_supabase.DB["meds"]) == 1
+
+    # 허가가 끝난 약을 고르면 경고 + 상세 링크 (경고 후 추가는 가능)
+    search(a, "옛날약")
+    assert any("허가 취소" in e.value and "2019-01-01" in e.value and "itemSeq=4" in e.value for e in a.error)
+    assert any(b_.label == "➕ 내 약에 추가" for b_ in a.button)
 
     # 용량별로 나뉜 약: 식약처 묶음 항목 없이 DUR 용량별 항목만 (같은 약 중복 표시 방지)
     opts = search(a, "리벨서스").options
