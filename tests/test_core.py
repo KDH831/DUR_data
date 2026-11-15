@@ -213,3 +213,22 @@ def test_nested_brackets():
     assert same_name("넥사바정200밀리그램(소라페닙토실레이트(미분화))_(0.274g/1정)") == \
         same_name("넥사바정200밀리그램(소라페닙토실레이트)")
     assert strip_brackets("짝안맞음(괄호") == "짝안맞음괄호"
+
+
+# ── 식약처 성분명의 제형 표현 (2026-11-15: 보령아스트릭스캡슐 'Aspirin Enteric Granules') ──
+def test_form_words_stripped_from_ingredients(data):
+    assert data.parse_ingredients("Aspirin Enteric Granules") == ["aspirin"]
+    assert data.parse_ingredients("Aspirin Enteric Pellets") == ["aspirin"]
+    assert data.parse_ingredients("Aspirin Lysine For Injection 90%") == ["aspirin"]
+    assert data.parse_ingredients("Aspirin Enteric Pellets/Clopidogrel Bisulfate") == ["aspirin", "clopidogrel"]
+    assert data.normalize("aspirin enteric granules") == "aspirin"      # 예전에 공동 캐시에 저장된 값도 다시 맞춰짐
+
+
+def test_duplicate_found_across_mfds_and_dur_aspirin(data):
+    """식약처에서 찾은 장용과립 아스피린 + DUR 목록의 아스피린 → 성분중복, 기피성분도 잡힘"""
+    bor = Med(key="api-199001012", name="보령아스트릭스캡슐100밀리그람(아스피린)",
+              extra_ingrs=frozenset(data.parse_ingredients("Aspirin Enteric Granules")))
+    cho = data.med_from_row(data.drugs[data.drugs["제품코드"] == "670700650"].iloc[0])   # 초당아스피린장용정
+    adult = Profile(birthdate=date(1990, 1, 1))
+    assert has([bor, cho], data, "성분중복", adult)
+    assert has([bor], data, "기피성분", Profile(birthdate=date(1990, 1, 1), avoid=["aspirin"]))
