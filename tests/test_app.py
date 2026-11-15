@@ -157,8 +157,8 @@ def test_my_med_detail_link(online):
     assert "[ⓘ](https://nedrug.mfds.go.kr/pbp/CCBBB01/getItemDetail?itemSeq=1 " in ok_line
     assert "⚠️" not in ok_line                                               # 정상 약
     old = line(at, "옛날약정(옛성분(20→1))")                                  # 괄호가 겹친 이름
-    assert "itemSeq=4 " in old and ":red[⚠️ 허가 취소 (2019-01-01)" in old and "의사나 약사" in old
-    assert "✅" not in old                                                    # 허가 끝난 약에 ✅ 안 붙음
+    assert "itemSeq=4 " in old and ":red[⛔ 허가 취소 (2019-01-01)" in old and "의사나 약사" in old
+    assert "⛔" in old.split("**")[0] and "✅" not in old                     # 취소 약 배지에 ⛔ (안전성 주의)
     assert not line(at, "아스피린장용정100밀리그램").startswith("⚠️")             # 정상 약엔 ⚠️ 없음
     assert "ⓘ" not in line(at, "오메가3")                                      # 영양제는 링크 없음
     assert not any(b.label == "ℹ️" for b in at.button)                         # 따로 누르는 버튼 없음
@@ -186,14 +186,32 @@ def test_my_med_detail_when_mfds_down(online, monkeypatch):
     assert API_CALLS.count("DOWN") == n                                      # 다시 그려도 재조회 안 함
 
 
-def test_ended_med_badge_without_findings(online):
-    """안전성 검사에 걸린 게 없어도 허가가 끝난 약에는 ✅ 대신 ⚠️ (젊은 성인, 약 1개)"""
+def test_permit_ended_display(online):
+    """취소: 안전성 확인 '주의'에 설명과 함께 + 배지 ⛔ / 취하·만료: 경고 없이 회색 안내만, 검색에선 파란 안내"""
     fake_supabase.USERS["e@x.com"] = "password5"
     at = online()
     login(at, "e@x.com", "password5")
-    make_profile(at, "나", 1990, 1, 1)
+    make_profile(at, "나", 1990, 1, 1)                                         # 젊은 성인: 다른 주의 없음
+    search(at, "만료약")
+    assert any("허가 만료" in i.value and "2023-11-20" in i.value for i in at.info)   # 검색: 파란 안내
+    assert not any("허가 만료" in w.value for w in [*at.warning, *at.error])
+    btn(at, "➕ 내 약에 추가").click().run()
+    ok(at)
     search(at, "옛날약")
     btn(at, "➕ 내 약에 추가").click().run()
     ok(at)
+
+    exp = line(at, "만료약캡슐(만료성분)")
+    assert exp.startswith("✅ **") and ":gray[판매 중단 · 허가 만료 (2023-11-20)]" in exp
+    assert "⚠️" not in exp and "⛔" not in exp
     old = line(at, "옛날약정(옛성분(20→1))")
-    assert old.startswith("⚠️ **") and "✅" not in old
+    assert old.startswith("⛔") and ":red[⛔ 허가 취소 (2019-01-01)" in old
+
+    # 안전성 확인 탭: 취소만 '허가취소' 주의로, 설명·행동 요령·링크와 함께
+    assert any(m.value.startswith("### ⛔ 허가취소 (1건)") for m in at.markdown)
+    assert any("허가취소란?" in c.value and "행정처분" in c.value for c in at.caption)
+    box = next(w.value for w in at.warning if "옛날약정" in w.value)
+    assert "2019-01-01에 식약처가 이 약의 품목허가를 취소했어요" in box
+    assert "itemSeq=4" in box and "의사나 약사와 상의" in box
+    assert not any("만료약캡슐" in w.value for w in [*at.warning, *at.error])  # 만료 약은 안전성 탭에 없음
+    assert any(m.label == "🟡 주의" and m.value == "1건" for m in at.metric)

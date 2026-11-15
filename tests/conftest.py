@@ -32,6 +32,9 @@ FAKE_MFDS = {
     "옛날약": [
         {"ITEM_NAME": "옛날약정(옛성분(20→1))", "ITEM_SEQ": "4", "ITEM_INGR_NAME": "Aspirin", "ENTP_NAME": "C제약",
          "CANCEL_NAME": "취소", "CANCEL_DATE": "20190101"}],
+    "만료약": [  # 실제 사례(아르테빈캡슐)처럼 갱신 안 해 만료된 약
+        {"ITEM_NAME": "만료약캡슐(만료성분)", "ITEM_SEQ": "5", "ITEM_INGR_NAME": "Acetaminophen", "ENTP_NAME": "D제약",
+         "CANCEL_NAME": "유효기간만료", "CANCEL_DATE": "20231120"}],
     "리벨서스": [  # 실제 응답: 용량 3개를 묶은 허가 1건, EDI_CODE null
         {"ITEM_NAME": "리벨서스정(세마글루티드)", "ITEM_SEQ": "202201785", "ITEM_INGR_NAME": "Semaglutide/Semaglutide/Semaglutide",
          "ENTP_NAME": "노보노디스크제약(주) ", "CANCEL_NAME": "정상", "CANCEL_DATE": None, "EDI_CODE": None}],
