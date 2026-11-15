@@ -43,7 +43,7 @@ SALT_TAIL = {
     "hydrate", "monohydrate", "dihydrate", "trihydrate", "hemihydrate", "sesquihydrate",
     "pentahydrate", "anhydrous", "anhydride", "micronized", "medoxomil", "cilexetil",
     "etexilate", "axetil", "pivoxil", "proxetil", "mofetil", "salt", "base", "chloride",
-    "bromide", "carbonate",
+    "bromide", "carbonate", "oxide",
 }
 # 성분명 뒤에 붙는 제형·가공 표현 (식약처 성분명: 'Aspirin Enteric Granules', 'Aspirin Lysine For Injection')
 # → 떼어내야 같은 성분으로 인식함 (안 떼면 성분중복·병용금기·기피성분 등을 놓침)
@@ -144,6 +144,8 @@ def norm_en(s: str) -> str:
     toks = [t for t in toks if t and t not in {"mg", "g", "ml", "mcg", "ug", "iu", "l"}]
     if not toks:
         return ""
+    while len(toks) > 1 and toks[-1] in FORM_TAIL:     # 제형 표현을 먼저 떼야 무기질 판정이 맞음
+        toks.pop()                          # ('calcium carbonate granules' → 'calcium carbonate')
     if toks[0] in COUNTER_ION_HEAD and len(toks) > 1 and \
             not all(t in INORGANIC_TAIL or t in HYDRATE for t in toks[1:]):
         toks = toks[1:]                     # sodium valproate → valproate
@@ -166,10 +168,11 @@ def norm_ko(s: str) -> str:
     s = re.sub(r"[^가-힣a-zA-Z]", "", s)
     if any(s.startswith(h) for h in KO_MINERAL_HEAD):     # 탄산칼슘 등은 이름 유지
         return s
-    for h in KO_SALT_HEAD:
-        if s.startswith(h) and len(s) > len(h) + 1:
-            s = s[len(h):]
-            break
+    if True:
+        for h in KO_SALT_HEAD:
+            if s.startswith(h) and len(s) > len(h) + 1:
+                s = s[len(h):]
+                break
     changed = True
     while changed:
         changed = False
@@ -468,27 +471,20 @@ def class_hits(ingrs, cls):
     return {i for i in ingrs if in_class(i, cls)}
 
 
-def age_in_units(birth: date, today: date, unit: str) -> int:
-    """달력 기준 만 나이 (age_text와 같은 계산). 생일·같은 날짜가 되는 날부터 한 살·한 달이 늘어남"""
-    if unit == "개월":
-        return (today.year - birth.year) * 12 + today.month - birth.month - (today.day < birth.day)
-    if unit == "주":
-        return (today - birth).days // 7
-    return today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))   # 세
+UNIT_DAYS = {"세": 365.25, "개월": 30.4375, "주": 7}
 
 
-def is_elderly(birth: date, today: date) -> bool:
-    return age_in_units(birth, today, "세") >= 65
-
-
-def age_matches(rule, birth: date, today: date):
-    n = int(float(rule["특정연령"]))
-    a = age_in_units(birth, today, rule["특정연령단위"].split()[0])
+def age_matches(rule, age_days):
+    n = float(rule["특정연령"])
+    unit = rule["특정연령단위"].split()[0]
+    limit = n * UNIT_DAYS.get(unit, 365.25)
     cond = rule["연령처리조건"]
-    if "미만" in cond: return a < n
-    if "이하" in cond: return a <= n          # '2세 이하' = 만 3세가 되기 전까지
-    if "이상" in cond: return a >= n
-    if "초과" in cond: return a > n
+    if "미만" in cond: return age_days < limit
+    if "이하" in cond:                       # '2세 이하' = 만 3세가 되기 전까지
+        nxt = (n + 1) * UNIT_DAYS.get(unit, 365.25)
+        return age_days < nxt
+    if "이상" in cond: return age_days >= limit
+    if "초과" in cond: return age_days >= (n + 1) * UNIT_DAYS.get(unit, 365.25)
     return False
 
 
@@ -507,8 +503,7 @@ def _name_scope(m: Med):
 
 def single_checks(m: Med, prof: Profile, data: DURData, today=None):
     out = []
-    today = today or today_kst()
-    birth = prof.birthdate
+    age = prof.age_days(today)
     scope = _name_scope(m)
 
     def rules(by_code, by_name):
@@ -532,13 +527,13 @@ def single_checks(m: Med, prof: Profile, data: DURData, today=None):
         elif a in m.ingrs:
             out.append(_f("기피성분", "금기", [m], [a], "프로필에 피해야 할 성분으로 등록한 성분이 들어 있어요."))
 
-    if birth is not None and is_elderly(birth, today):
+    if age is not None and age >= 65 * 365.25:
         for r, by in rules(data.elderly_code, data.elderly_name):
             out.append(_f("노인주의", "주의", [m], m.ingrs if by is None else [by], r["상세정보"],
                           "" if by is None else "성분명 기준 확인"))
-    if birth is not None:
+    if age is not None:
         for r, by in rules(data.age_code, data.age_name):
-            if age_matches(r, birth, today):
+            if age_matches(r, age):
                 cond = f"{r['특정연령']}{r['특정연령단위'].split()[0]} {r['연령처리조건'].split()[0]} 사용 금기"
                 if by is not None:
                     cond += " · 성분명 기준 확인"
