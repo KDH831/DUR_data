@@ -613,9 +613,18 @@ def short_name(name):
     return name.split("_(")[0]
 
 
+def strip_brackets(s):
+    """괄호와 그 안의 내용 제거. 괄호가 겹쳐도 처리함
+    '스틴투엑스정(애엽95%에탄올연조엑스(20→1))' → '스틴투엑스정' (안쪽 괄호부터 반복해서 지움)"""
+    prev = None
+    while prev != s:
+        prev, s = s, re.sub(r"\([^()]*\)|\[[^\[\]]*\]", "", s)
+    return re.sub(r"[()\[\]]", "", s)          # 짝이 안 맞아 남은 괄호 기호
+
+
 def same_name(n):
     """'조코정20밀리그램(심바스타틴)_(20mg/1정)'과 식약처 '조코정20밀리그램(심바스타틴)'을 같은 제품으로 보기 위한 비교용 이름"""
-    return re.sub(r"\(.*?\)|\[.*?\]|\s", "", short_name(n)).replace("밀리그람", "밀리그램").lower()
+    return re.sub(r"\s", "", strip_brackets(short_name(n))).replace("밀리그람", "밀리그램").lower()
 
 
 class DurIndex:
@@ -653,7 +662,7 @@ class DurIndex:
 def detail_queries(name):
     """'내 약' 이름으로 식약처를 찾을 검색어 후보 (앞의 것부터 시도)
     '광동아스피린장용정100mg_(0.1g/1정)' → ['광동아스피린장용정100mg', '광동아스피린장용정']"""
-    q1 = re.sub(r"\(.*?\)|\[.*?\]", "", short_name(name)).strip()
+    q1 = re.sub(r"\s+", " ", strip_brackets(short_name(name))).strip()
     q2 = re.split(r"\d", q1)[0].strip()
     return [q for i, q in enumerate([q1, q2]) if len(q) >= 2 and q not in [q1, q2][:i]]
 

@@ -699,9 +699,7 @@ with tab1:
     for d in my:
         icons = sorted({INFO[f["종류"]]["icon"] for f in findings if d.name in f["약"]})
         c1, c2, c3 = st.columns([5, 1, 1])
-        badge = " ".join(icons) if icons else ("➖" if not d.ingrs else "✅")
-        note = "  \n_성분 정보가 없어 안전성 확인 대상 아님_" if not d.ingrs else ""
-        md_link, md_permit = "", ""         # (이 파일은 모듈 수준이라 다른 곳의 이름과 겹치지 않게 md_ 접두어)
+        md_link, md_permit, md_end = "", "", None   # (이 파일은 모듈 수준이라 다른 곳의 이름과 겹치지 않게 md_ 접두어)
         if not d.key.startswith("note:"):
             md_item, md_url = med_detail(d)
             if md_url:    # 약 이름 옆 작은 아이콘 → 의약품안전나라 상세 페이지 (새 탭)
@@ -712,6 +710,9 @@ with tab1:
                 md_advice = " — 복용 중이라면 의사나 약사와 상의하세요" if md_level == "error" else ""
                 md_permit = f"  \n:{'red' if md_level == 'error' else 'orange'}[⚠️ {md_tag}" \
                             f"{f' ({md_date})' if md_date else ''}{md_advice}]"
+        # ✅는 '안전성 검사에서 걸린 것 없음'이지만, 허가가 끝난 약에 붙으면 괜찮은 약으로 오해할 수 있어 ⚠️로 바꿈
+        badge = " ".join(icons) if icons else ("⚠️" if md_end else ("➖" if not d.ingrs else "✅"))
+        note = "  \n_성분 정보가 없어 안전성 확인 대상 아님_" if not d.ingrs else ""
         c1.write(f"{badge} **{short_name(d.name)}**{md_link}{md_permit}  \n"
                  f"복용: {', '.join(d.times) or '시간 미지정'}{note}")
         with c2.popover("⏰"):
