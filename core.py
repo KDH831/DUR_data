@@ -45,6 +45,10 @@ SALT_TAIL = {
     "etexilate", "axetil", "pivoxil", "proxetil", "mofetil", "salt", "base", "chloride",
     "bromide", "carbonate", "oxide",
 }
+# 성분명 뒤에 붙는 제형·가공 표현 (식약처 성분명: 'Aspirin Enteric Granules', 'Aspirin Lysine For Injection')
+# → 떼어내야 같은 성분으로 인식함 (안 떼면 성분중복·병용금기·기피성분 등을 놓침)
+FORM_TAIL = {"enteric", "granules", "granule", "pellets", "pellet", "coated", "encapsulated",
+             "microencapsulated", "micronized", "for", "injection"}
 HYDRATE = {"hydrate", "monohydrate", "dihydrate", "trihydrate", "hemihydrate",
            "sesquihydrate", "pentahydrate", "anhydrous", "micronized"}
 MINERAL_HEAD = {"sodium", "potassium", "calcium", "magnesium", "aluminum", "aluminium",
@@ -145,8 +149,10 @@ def norm_en(s: str) -> str:
         toks = toks[1:]                     # sodium valproate → valproate
     if toks[0] in MINERAL_HEAD:             # 탄산칼슘·염화칼륨 같은 무기질은 이름 유지
         toks = [t for t in toks if t not in HYDRATE] or toks
+        while len(toks) > 1 and toks[-1] in FORM_TAIL:
+            toks.pop()
     else:
-        while len(toks) > 1 and toks[-1] in SALT_TAIL:
+        while len(toks) > 1 and (toks[-1] in SALT_TAIL or toks[-1] in FORM_TAIL):
             toks.pop()
         while len(toks) > 1 and toks[0] in SALT_TAIL:
             toks.pop(0)
