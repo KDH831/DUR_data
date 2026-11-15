@@ -59,13 +59,14 @@ def test_signup_isolation_search_and_delete(online):
     box = search(a, "아스피린")
     opts = box.options
     assert any("아스트릭스" in o for o in opts)
-    ended = [i for i, o in enumerate(opts) if o.startswith("⚠️")]
+    ended = [i for i, o in enumerate(opts) if o.startswith(("⚠️", "⛔"))]
     assert ended and ended == list(range(len(opts) - len(ended), len(opts)))   # 모두 맨 뒤
     old_ = next(o for o in opts if "옛날아스피린" in o)
-    assert "[허가 취소]" in old_
+    assert old_.startswith("⛔ [허가 취소]")                                   # 취소는 ⛔
     y2 = next(o for o in opts if "와이투아스피린" in o)                        # DUR 목록에만 남은 만료 약
-    assert "[판매 중단·허가 만료]" in y2 and "_(0.1g/1정)" in y2
-    assert not opts[0].startswith("⚠️")                                       # 정상 약 선택 시 허가 경고 없음
+    assert y2.startswith("⚠️ [판매 중단·허가 만료]") and "_(0.1g/1정)" in y2   # 취하·만료는 ⚠️
+    assert opts.index(old_) < opts.index(y2)                                   # 취소가 만료보다 먼저
+    assert not opts[0].startswith(("⚠️", "⛔"))                               # 정상 약 선택 시 허가 경고 없음
     assert not any("판매 중단" in w.value or "허가" in w.value for w in [*a.warning, *a.error])
 
     btn(a, "➕ 내 약에 추가").click().run()
@@ -187,14 +188,14 @@ def test_my_med_detail_when_mfds_down(online, monkeypatch):
 
 
 def test_permit_ended_display(online):
-    """취소: 안전성 확인 '주의'에 설명과 함께 + 배지 ⛔ / 취하·만료: 경고 없이 회색 안내만, 검색에선 파란 안내"""
+    """취소: 안전성 확인 '주의'에 설명과 함께 + 배지 ⛔ / 취하·만료: '내 약'엔 회색 안내만, 검색에선 노란 경고"""
     fake_supabase.USERS["e@x.com"] = "password5"
     at = online()
     login(at, "e@x.com", "password5")
     make_profile(at, "나", 1990, 1, 1)                                         # 젊은 성인: 다른 주의 없음
     search(at, "만료약")
-    assert any("허가 만료" in i.value and "2023-11-20" in i.value for i in at.info)   # 검색: 파란 안내
-    assert not any("허가 만료" in w.value for w in [*at.warning, *at.error])
+    assert any("허가 만료" in w.value and "2023-11-20" in w.value for w in at.warning)  # 검색: 노란 경고
+    assert not any("허가 만료" in e.value for e in [*at.info, *at.error])
     btn(at, "➕ 내 약에 추가").click().run()
     ok(at)
     search(at, "옛날약")
