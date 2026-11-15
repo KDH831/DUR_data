@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import mfds_api
-from core import (DURData, DurIndex, Med, Profile, analyze_all, med_from_cache, norm_drug_name, note_med,
+from core import (DURData, DurIndex, Med, detail_queries, pick_mfds_item, Profile, analyze_all, med_from_cache, norm_drug_name, note_med,
                   pair_checks, short_name, single_checks, today_kst)
 from rules import CLASSES
 from store import LocalStore, SupabaseStore
@@ -498,6 +498,24 @@ def dur_index():
     return DurIndex(data.drugs)
 
 
+def med_detail(m):
+    """'내 약' 1개 → (식약처 품목 또는 None, 상세 페이지 링크 또는 '', 조회 실패 여부)
+    ℹ️ 버튼을 누른 약만 조회함. 검색 탭과 같은 조건으로 불러서 하루 공유 저장을 함께 씀"""
+    seq = m.key[4:] if m.key.startswith("api-") and m.key[4:].isdigit() else ""
+    hit, failed = None, False
+    if API_ON:
+        for q in detail_queries(m.name):
+            try:
+                hit = pick_mfds_item(m.key, api_search(q, rows=100, include_inactive=True), dur_index())
+            except Exception:
+                failed = True
+                continue
+            if hit:
+                break
+    seq = (hit or {}).get("item_seq") or seq
+    return hit, (mfds_api.DETAIL_URL.format(seq) if seq else ""), failed
+
+
 my = []
 for r in rows:
     m = to_med(r["product_key"], r.get("label"))
@@ -675,7 +693,7 @@ with tab1:
         st.write("아직 등록한 약이 없어요.")
     for d in my:
         icons = sorted({INFO[f["종류"]]["icon"] for f in findings if d.name in f["약"]})
-        c1, c2, c3 = st.columns([5, 1, 1])
+        c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
         badge = " ".join(icons) if icons else ("➖" if not d.ingrs else "✅")
         note = "  \n_성분 정보가 없어 안전성 확인 대상 아님_" if not d.ingrs else ""
         c1.write(f"{badge} **{short_name(d.name)}**  \n복용: {', '.join(d.times) or '시간 미지정'}{note}")
@@ -687,6 +705,24 @@ with tab1:
         if c3.button("삭제", key=f"del_{d.med_id}"):
             store.remove_med(d.med_id)
             st.rerun()
+        if not d.key.startswith("note:") and c4.button("ℹ️", key=f"info_{d.med_id}", help="식약처 상세 정보·허가 상태"):
+            st.session_state.info_med = None if st.session_state.get("info_med") == d.med_id else d.med_id
+            st.rerun()
+        if st.session_state.get("info_med") == d.med_id:
+            with st.container(border=True), st.spinner("식약처 허가정보에서 찾는 중..."):
+                item, url, failed = med_detail(d)
+                if item is not None and (ended := mfds_api.status_info(item)):
+                    e_tag, e_level, e_msg, e_date, _ = ended
+                    (st.error if e_level == "error" else st.warning)(
+                        f"**{e_tag}**{f' ({e_date})' if e_date else ''} — {e_msg}")
+                if url:
+                    st.markdown(f"📖 [의약품안전나라에서 효능·용법·주의사항 보기]({url})")
+                    st.caption("식품의약품안전처의 공식 의약품 정보예요.")
+                elif failed:
+                    st.info("식약처 조회가 잠시 안 돼요. 잠시 후 다시 눌러 주세요.")
+                else:
+                    st.info("식약처에서 이 약의 상세 페이지를 찾지 못했어요. "
+                            "[의약품안전나라](https://nedrug.mfds.go.kr)에서 약 이름으로 검색해 보세요.")
     if findings:
         st.caption("아이콘이 붙은 약은 '안전성 확인' 탭에서 자세한 설명을 볼 수 있어요.")
 

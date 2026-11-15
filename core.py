@@ -650,6 +650,26 @@ class DurIndex:
         return self.groups[k][:1] if len(self.ingr[k]) == 1 else list(self.groups[k])
 
 
+def detail_queries(name):
+    """'내 약' 이름으로 식약처를 찾을 검색어 후보 (앞의 것부터 시도)
+    '광동아스피린장용정100mg_(0.1g/1정)' → ['광동아스피린장용정100mg', '광동아스피린장용정']"""
+    q1 = re.sub(r"\(.*?\)|\[.*?\]", "", short_name(name)).strip()
+    q2 = re.split(r"\d", q1)[0].strip()
+    return [q for i, q in enumerate([q1, q2]) if len(q) >= 2 and q not in [q1, q2][:i]]
+
+
+def pick_mfds_item(key, items, idx):
+    """'내 약'의 저장 키에 해당하는 식약처 품목 (없으면 None)
+    api-품목기준코드 → 같은 품목기준코드, DUR 제품코드 → DurIndex로 그 제품에 연결되는 품목.
+    허가가 살아 있는 품목이 있으면 그것을 우선함"""
+    if key.startswith("api-"):
+        hits = [r for r in items if r.get("item_seq") == key[4:]]
+    else:
+        hits = [r for r in items if key in idx.match(r)]
+    live = [r for r in hits if r.get("active", True)]
+    return (live or hits or [None])[0]
+
+
 DOSAGE_FORMS = ["필름코팅정", "서방정", "장용정", "연질캡슐", "경질캡슐", "캡슐", "츄어블정", "발포정",
                 "정", "시럽", "현탁액", "액", "산", "과립", "크림", "연고", "패치"]
 
