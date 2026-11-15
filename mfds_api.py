@@ -96,6 +96,7 @@ def search(name, rows=20, timeout=10, include_inactive=False):
     for it in _items(data):
         raw = next((it[f] for f in INGR_FIELDS if it.get(f)), "")
         nm = it.get("ITEM_NAME") or it.get("item_name")
+        nm = re.sub(r"\s+", " ", nm).strip() if nm else nm      # 이름에 섞인 줄바꿈 정리 (예: '휴란정150mg\n\n(라니티딘염산염)')
         active = is_active(it)
         if nm and raw and (active or include_inactive):
             out.append({"name": nm, "item_seq": str(it.get("ITEM_SEQ") or it.get("PRDLST_STDR_CODE") or ""),
