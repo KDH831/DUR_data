@@ -248,9 +248,9 @@ API_ON = bool(mfds_api.get_key())
 
 
 @st.cache_data(ttl=24 * 3600, max_entries=5000, show_spinner=False)
-def api_search(q, rows=50):
+def api_search(q, rows=50, include_inactive=False):
     """식약처 조회 결과를 모든 사용자가 하루 동안 공유 (하루 호출 한도 절약). 실패(예외)는 저장 안 됨"""
-    return mfds_api.search(q, rows=rows)
+    return mfds_api.search(q, rows=rows, include_inactive=include_inactive)
 TIMES = ["아침", "점심", "저녁", "자기 전"]
 
 # 경고 종류별 아이콘, 등급, 설명, 행동 요령
@@ -556,7 +556,8 @@ with tab1:
             st.session_state.api_res, st.session_state.api_fail = [], False
             try:
                 with st.spinner("식약처 허가정보에서 찾는 중..."):
-                    st.session_state.api_res = api_search(kw, rows=50)
+                    # 허가가 끝난 품목도 함께 받아서 표시·경고 (호출 횟수는 같음)
+                    st.session_state.api_res = api_search(kw, rows=100, include_inactive=True)
             except Exception:
                 st.session_state.api_fail = True
             st.session_state.api_q = kw
@@ -564,6 +565,11 @@ with tab1:
                    if data.parse_ingredients(r["ingredients_raw"])]
 
         idx = dur_index()
+        # 허가가 끝난 식약처 품목과 같은 DUR 제품(예: DUR 목록에만 남은 만료 약)에도 같은 경고를 붙임
+        # 단, 같은 DUR 제품에 허가가 살아 있는 품목도 연결되면 경고하지 않음
+        live_codes = {c for r in api_res if r.get("active", True) for c in idx.match(r)}
+        ended_for_code = {c: r for r in api_res if not r.get("active", True)
+                          for c in idx.match(r) if c not in live_codes}
         api_for_code, options = {}, []
         for i, r in enumerate(api_res):
             codes = idx.match(r)          # DUR 목록에 있는 제품 → 코드로 검사 (용량별로 나뉜 약은 용량별 항목으로)
@@ -586,7 +592,23 @@ with tab1:
         options += [("dur", c) for c in data.search(kw)["제품코드"] if c not in seen]
         cmap = {r["key"]: r for r in cached}
 
+        def ended(o):
+            """허가가 끝난 항목이면 그 식약처 품목, 아니면 None"""
+            if o[0] == "api":
+                return None if api_res[o[1]].get("active", True) else api_res[o[1]]
+            return ended_for_code.get(o[1]) if o[0] == "dur" else None
+
+        options.sort(key=lambda o: ended(o) is not None)     # 허가가 끝난 약은 목록 맨 뒤로
+
         def label(o):
+            try:
+                end = ended(o)
+                tag = f"⚠️ [{mfds_api.status_info(end)[0]}]  " if end else ""
+            except (KeyError, IndexError, TypeError):
+                tag = ""
+            return tag + base_label(o)
+
+        def base_label(o):
             try:
                 if o[0] == "cache":
                     return cmap[o[1]]["name"]
@@ -603,6 +625,12 @@ with tab1:
                     "아래 '영양제 등 추가'를 이용하세요.")
         else:
             sel = st.selectbox(f"검색 결과 {len(options)}건", options, format_func=label)
+            if (end := ended(sel)) is not None:
+                e_tag, e_level, e_msg, e_date, e_url = mfds_api.status_info(end)   # (date는 모듈 이름과 겹치지 않게)
+                text = f"**{e_tag}**{f' ({e_date})' if e_date else ''} — {e_msg}"
+                if e_url:
+                    text += f" [의약품안전나라에서 자세히 보기]({e_url})"
+                (st.error if e_level == "error" else st.warning)(text)
             r = None
             if sel[0] == "api":
                 r = api_res[sel[1]]

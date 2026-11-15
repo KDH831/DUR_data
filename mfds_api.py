@@ -51,13 +51,40 @@ def is_active(it):
     return not cdate and status in ("", "정상")
 
 
+DETAIL_URL = "https://nedrug.mfds.go.kr/pbp/CCBBB01/getItemDetail?itemSeq={}"
+
+# 허가 상태(CANCEL_NAME)별 안내. 실제 응답에서 확인한 값: 정상 / 취하 / 유효기간만료 (취소는 드묾)
+_ADMIN = " 보통 생산 중단 같은 행정적인 이유이고, 약 자체에 안전 문제가 있다는 뜻은 아니에요."
+STATUS = {
+    "취하": ("판매 중단·취하", "warning",
+           "제조·수입사가 허가를 스스로 반납해 지금은 판매되지 않는 약이에요." + _ADMIN),
+    "유효기간만료": ("판매 중단·허가 만료", "warning",
+               "허가 유효기간(5년)이 끝난 뒤 갱신되지 않아 지금은 판매되지 않는 약이에요." + _ADMIN),
+    "취소": ("허가 취소", "error",
+           "식약처가 행정처분으로 허가를 취소한 약이에요. 복용 중이라면 의사나 약사와 상의하세요."),
+}
+
+
+def status_info(item):
+    """허가가 끝난 품목의 안내 → (짧은 표시, 'warning'|'error', 설명, 날짜 'YYYY-MM-DD', 상세 링크). 정상 품목은 None"""
+    if item.get("active", True):
+        return None
+    name = item.get("cancel_name") or ""
+    tag, level, msg = STATUS.get(name, (f"허가 종료·{name}" if name else "허가 종료", "warning",
+                                        "지금은 허가가 유지되지 않는 약이에요."))
+    d = re.sub(r"\D", "", item.get("cancel_date") or "")
+    date = f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 else ""
+    url = DETAIL_URL.format(item["item_seq"]) if item.get("item_seq") else ""
+    return tag, level, msg, date, url
+
+
 def edi_codes(it):
     """보험 EDI 코드 목록 (= DUR 목록의 제품코드). 용량 여러 개를 묶은 허가 등은 비어 있음(null)"""
     return re.findall(r"\d{9}", str(it.get("EDI_CODE") or ""))
 
 
 def search(name, rows=20, timeout=10, include_inactive=False):
-    """반환: [{'name', 'item_seq', 'ingredients_raw', 'company', 'active', 'edi_codes'}]. 키가 없으면 [], 통신 실패 시 예외
+    """반환: [{'name', 'item_seq', 'ingredients_raw', 'company', 'active', 'edi_codes', 'cancel_name', 'cancel_date'}]. 키가 없으면 [], 통신 실패 시 예외
     기본값은 허가 취소·취하 품목을 빼고 돌려줌"""
     key = get_key()
     if not key:
@@ -73,5 +100,7 @@ def search(name, rows=20, timeout=10, include_inactive=False):
         if nm and raw and (active or include_inactive):
             out.append({"name": nm, "item_seq": str(it.get("ITEM_SEQ") or it.get("PRDLST_STDR_CODE") or ""),
                         "ingredients_raw": raw, "company": (it.get("ENTP_NAME") or "").strip(), "active": active,
-                        "edi_codes": edi_codes(it)})
+                        "edi_codes": edi_codes(it),
+                        "cancel_name": str(it.get("CANCEL_NAME") or "").strip(),
+                        "cancel_date": str(it.get("CANCEL_DATE") or "").strip()})
     return out
