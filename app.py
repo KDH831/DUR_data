@@ -5,8 +5,8 @@ import pandas as pd
 import streamlit as st
 
 import mfds_api
-from core import (DURData, DurIndex, Med, detail_queries, pick_mfds_item, Profile, analyze_all, med_from_cache, norm_drug_name, note_med,
-                  pair_checks, short_name, single_checks, today_kst)
+from core import (DURData, DurIndex, Med, detail_queries, pick_mfds_item, Profile, analyze_all, is_elderly, med_from_cache,
+                  norm_drug_name, note_med, pair_checks, short_name, single_checks, today_kst)
 from rules import CLASSES
 from store import LocalStore, SupabaseStore
 
@@ -473,10 +473,11 @@ def to_med(key, label=None):
     if key.startswith("note:"):
         return note_med(key, label)
     if key.startswith("api-"):
-        return med_from_cache(cache[key]) if key in cache else None
+        # 공동 캐시에 성분이 없으면(서버 키 미설정 등) 이름만으로 표시 → 목록에서 보이고 삭제 가능
+        return med_from_cache(cache[key]) if key in cache else Med(key=key, name=label or key)
     row = data.product_row(key)
-    if row is None:
-        return None
+    if row is None:                      # DUR 데이터 갱신으로 목록에서 빠진 제품도 같은 방식으로 표시
+        return Med(key=key, name=label or key)
     m = data.med_from_row(row)
     if key in cache:
         m.extra_ingrs = frozenset(set(m.extra_ingrs) | (set(cache[key]["ingredients"]) - set(m.dur_ingrs)))
@@ -495,7 +496,10 @@ def enrich_full_ingredients(code, pname):
     for r in res:
         if norm_drug_name(r["name"]) == target:
             ings = data.parse_ingredients(r["ingredients_raw"])
-            store.cache_put(code, r["name"], ings, r["ingredients_raw"])
+            try:
+                store.cache_put(code, r["name"], ings, r["ingredients_raw"])
+            except Exception:            # 보강은 선택 사항이라 실패해도 약 추가는 계속
+                pass
             return
 
 
@@ -594,7 +598,9 @@ with tab1:
         # 약 정보는 식약처 허가정보에서 찾음 (허가된 모든 의약품 + 전체 주성분).
         # 같은 제품이 DUR 목록에도 있으면 DUR 성분코드를 붙여 병용금기 등을 코드로 정확히 검사.
         # 식약처에 결과가 없으면(성분명으로 검색한 경우 등) 기존 DUR 목록·공동 DB에서 찾음.
-        if API_ON and st.session_state.get("api_q") != kw:   # 같은 검색어는 한 번만 조회
+        # 같은 검색어는 한 번만 조회. 단, 조회가 실패했던 검색어는 MFDS_RETRY_SEC 뒤 다시 시도
+        api_retry = st.session_state.get("api_fail") and time.time() >= st.session_state.get("api_retry_at", 0)
+        if API_ON and (st.session_state.get("api_q") != kw or api_retry):
             st.session_state.api_res, st.session_state.api_fail = [], False
             try:
                 with st.spinner("식약처 허가정보에서 찾는 중..."):
@@ -602,6 +608,7 @@ with tab1:
                     st.session_state.api_res = api_search(kw, rows=100, include_inactive=True)
             except Exception:
                 st.session_state.api_fail = True
+                st.session_state.api_retry_at = time.time() + MFDS_RETRY_SEC
             st.session_state.api_q = kw
         api_res = [r for r in (st.session_state.get("api_res", []) if API_ON else [])
                    if data.parse_ingredients(r["ingredients_raw"])]
@@ -699,11 +706,14 @@ with tab1:
             times = st.multiselect("복용 시간", TIMES, default=["아침"], key="t_search")
             if st.button("➕ 내 약에 추가", type="primary"):
                 if r is not None:                            # 식약처 공식 데이터만 공동 DB에 저장
-                    store.cache_put(cand.key, r["name"], data.parse_ingredients(r["ingredients_raw"]),
-                                    r["ingredients_raw"])
+                    try:
+                        store.cache_put(cand.key, r["name"], data.parse_ingredients(r["ingredients_raw"]),
+                                        r["ingredients_raw"])
+                    except Exception:                        # 저장 실패해도 약은 이름으로 등록됨
+                        pass
                 elif sel[0] == "dur":
                     enrich_full_ingredients(cand.key, cand.name)
-                if store.add_med(pid, cand.key, times):
+                if store.add_med(pid, cand.key, times, label=cand.name):   # 이름도 저장 (성분을 못 찾아도 표시용)
                     st.session_state.clear_kw = True
                     st.rerun()
                 else:
@@ -791,7 +801,7 @@ with tab2:
         days = [(today_kst() - timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
         cnt = store.intake_counts(pid, days)
         chart = pd.DataFrame({"날짜": [x[5:] for x in days],
-                              "복용률(%)": [round(100 * cnt.get(x, 0) / total) for x in days]}).set_index("날짜")
+                              "복용률(%)": [min(100, round(100 * cnt.get(x, 0) / total)) for x in days]}).set_index("날짜")
         st.markdown("##### 최근 7일 복용률")
         st.bar_chart(chart, height=180)
         st.caption("현재 복용 계획(하루 %d회) 기준으로 계산했어요." % total)
@@ -833,7 +843,7 @@ with tab3:
                 text += f"\n\n👉 **어떻게 하나요?** {info['todo']}"
                 box(text)
 
-        if prof.age_days(today_kst()) is not None and prof.age_days(today_kst()) < 65 * 365.25:
+        if prof.birthdate is not None and not is_elderly(prof.birthdate, today_kst()):
             st.caption("※ 노인주의 항목은 나이가 65세 이상일 때만 확인합니다.")
         if not prof.pregnant:
             st.caption("※ 임부금기 항목은 프로필에서 '임신 중'을 선택했을 때만 확인합니다.")
