@@ -273,6 +273,13 @@ INFO = {
         "icon": "🤰", "level": "금기",
         "what": "임신 중 복용하면 태아에게 해로울 수 있어 사용을 피하도록 지정된 약이에요(1등급).",
         "todo": "임신 중이거나 임신 가능성이 있다면 복용 전에 반드시 의사와 상의하세요."},
+    "허가취소": {
+        "icon": "⛔", "level": "주의",
+        "what": "식품의약품안전처가 행정처분으로 품목허가를 취소한 약이에요. 지금은 만들거나 팔 수 없는 약이라는 뜻이고, "
+                "이미 가진 약이 곧바로 위험하다는 뜻은 아니에요. 회사가 스스로 판매를 그만둔 '취하'나 "
+                "갱신을 안 한 '허가 만료'와 달리, 식약처가 문제를 인정해 내린 처분이라 확인이 필요해요.",
+        "todo": "임의로 끊지 말고, 계속 복용해도 되는지 처방한 의사나 약사와 상의하세요. "
+                "같은 성분의 다른 약으로 바꿀 수 있는지도 물어보세요."},
     "상호작용주의": {
         "icon": "🟠", "level": "주의",
         "what": "함께 먹는 것이 금지된 조합은 아니지만, 함께 먹으면 부작용이 커지거나 약효가 달라질 수 있어 "
@@ -530,6 +537,18 @@ for r in rows:
 meds = [m for m in my if m.ingrs]          # 성분을 알아야 검사 가능
 findings = analyze_all(meds, prof, data, today_kst())
 
+# 식약처 허가 상태·상세 링크 (약마다 한 번, 하루 공유 저장). 취소된 약만 안전성 확인의 '주의'에 넣음
+# (취하·허가 만료는 대부분 행정적인 이유라 '내 약' 목록에 회색 안내만)
+permit = {m.med_id: med_detail(m) for m in my if not m.key.startswith("note:")}
+for m in my:
+    p_item, p_url = permit.get(m.med_id, (None, ""))
+    p_end = mfds_api.status_info(p_item) if p_item is not None else None
+    if p_end and p_end[1] == "error":
+        p_date = f"{p_end[3]}에 " if p_end[3] else ""
+        findings.append({"종류": "허가취소", "level": "주의", "약": [m.name], "성분": sorted(m.ingrs),
+                         "사유": f"{p_date}식약처가 이 약의 품목허가를 취소했어요.",
+                         "참고": f"[의약품안전나라에서 자세히 보기]({p_url})" if p_url else ""})
+
 st.title("💊 내 약 지킴이")
 st.write("복용 중인 약을 등록하면 복약 시간을 관리하고, "
          "함께 먹으면 안 되는 약을 알려드려요.")
@@ -653,7 +672,7 @@ with tab1:
                 text = f"**{e_tag}**{f' ({e_date})' if e_date else ''} — {e_msg}"
                 if e_url:
                     text += f" [의약품안전나라에서 자세히 보기]({e_url})"
-                (st.error if e_level == "error" else st.warning)(text)
+                (st.error if e_level == "error" else st.info)(text)     # 취하·만료는 경고가 아닌 안내
             r = None
             if sel[0] == "api":
                 r = api_res[sel[1]]
@@ -699,19 +718,19 @@ with tab1:
     for d in my:
         icons = sorted({INFO[f["종류"]]["icon"] for f in findings if d.name in f["약"]})
         c1, c2, c3 = st.columns([5, 1, 1])
-        md_link, md_permit, md_end = "", "", None   # (이 파일은 모듈 수준이라 다른 곳의 이름과 겹치지 않게 md_ 접두어)
-        if not d.key.startswith("note:"):
-            md_item, md_url = med_detail(d)
-            if md_url:    # 약 이름 옆 작은 아이콘 → 의약품안전나라 상세 페이지 (새 탭)
-                md_link = f" [ⓘ]({md_url} \"의약품안전나라에서 효능·용법·주의사항 보기\")"
-            md_end = mfds_api.status_info(md_item) if md_item is not None else None
-            if md_end:
-                md_tag, md_level, _, md_date, _ = md_end
-                md_advice = " — 복용 중이라면 의사나 약사와 상의하세요" if md_level == "error" else ""
-                md_permit = f"  \n:{'red' if md_level == 'error' else 'orange'}[⚠️ {md_tag}" \
-                            f"{f' ({md_date})' if md_date else ''}{md_advice}]"
-        # ✅는 '안전성 검사에서 걸린 것 없음'이지만, 허가가 끝난 약에 붙으면 괜찮은 약으로 오해할 수 있어 ⚠️로 바꿈
-        badge = " ".join(icons) if icons else ("⚠️" if md_end else ("➖" if not d.ingrs else "✅"))
+        md_link, md_permit = "", ""         # (이 파일은 모듈 수준이라 다른 곳의 이름과 겹치지 않게 md_ 접두어)
+        md_item, md_url = permit.get(d.med_id, (None, ""))
+        if md_url:        # 약 이름 옆 작은 아이콘 → 의약품안전나라 상세 페이지 (새 탭)
+            md_link = f" [ⓘ]({md_url} \"의약품안전나라에서 효능·용법·주의사항 보기\")"
+        md_end = mfds_api.status_info(md_item) if md_item is not None else None
+        if md_end:
+            md_tag, md_level, _, md_date, _ = md_end
+            md_when = f" ({md_date})" if md_date else ""
+            if md_level == "error":     # 취소: 눈에 띄게 (안전성 확인 탭의 '허가취소' 주의와 같은 내용)
+                md_permit = f"  \n:red[⛔ {md_tag}{md_when} — 복용 중이라면 의사나 약사와 상의하세요]"
+            else:                       # 취하·허가 만료: 경고가 아닌 안내
+                md_permit = f"  \n:gray[{md_tag.replace('·', ' · ')}{md_when}]"
+        badge = " ".join(icons) if icons else ("➖" if not d.ingrs else "✅")
         note = "  \n_성분 정보가 없어 안전성 확인 대상 아님_" if not d.ingrs else ""
         c1.write(f"{badge} **{short_name(d.name)}**{md_link}{md_permit}  \n"
                  f"복용: {', '.join(d.times) or '시간 미지정'}{note}")
@@ -800,7 +819,8 @@ with tab3:
                 box = st.error if f["level"] == "금기" else st.warning
                 names_ = " + ".join(f"**{short_name(n)}**" for n in f["약"])
                 ings = " / ".join(data.label(i) for i in dict.fromkeys(f["성분"]))
-                text = f"{names_}\n\n🧪 성분: {ings}\n\n❓ **왜 주의해야 하나요?** {f['사유']}"
+                text = f"{names_}" + (f"\n\n🧪 성분: {ings}" if ings else "") + \
+                    f"\n\n❓ **왜 주의해야 하나요?** {f['사유']}"
                 if f["참고"]:
                     text += f"\n\n📌 **참고**: {f['참고']}"
                 text += f"\n\n👉 **어떻게 하나요?** {info['todo']}"
